@@ -81,9 +81,16 @@ class MarketPricer:
         *,
         is_neutral: bool = False,
         rest: Optional[RestContext] = None,
+        margin_adj: float = 0.0,
+        pace_scale: float = 1.0,
     ) -> list[EdgeOpportunity]:
         raw_home = self.model.predict_proba(
-            home_team_id, away_team_id, is_neutral=is_neutral, rest=rest
+            home_team_id,
+            away_team_id,
+            is_neutral=is_neutral,
+            rest=rest,
+            margin_adj=margin_adj,
+            pace_scale=pace_scale,
         )
         fair_home, fair_away = fair_probs_from_american(home_ml, away_ml)
         model_home = self.model.shrink_to_market(raw_home, fair_home)
@@ -120,6 +127,8 @@ class MarketPricer:
         *,
         is_neutral: bool = False,
         rest: Optional[RestContext] = None,
+        margin_adj: float = 0.0,
+        pace_scale: float = 1.0,
     ) -> list[EdgeOpportunity]:
         raw_home = self.model.cover_prob(
             home_team_id,
@@ -127,6 +136,8 @@ class MarketPricer:
             home_spread,
             is_neutral=is_neutral,
             rest=rest,
+            margin_adj=margin_adj,
+            pace_scale=pace_scale,
         )
         fair_home, fair_away = fair_probs_from_american(home_spread_odds, away_spread_odds)
         model_home = self.model.shrink_to_market(raw_home, fair_home)

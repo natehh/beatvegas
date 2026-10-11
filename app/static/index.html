@@ -262,6 +262,11 @@
         <label class="inline"><input type="checkbox" name="bet-market" value="spread" checked /> Spread</label>
         <label class="inline"><input type="checkbox" name="bet-market" value="total" /> Totals</label>
       </fieldset>
+      <fieldset class="mode-field">
+        <legend>Features</legend>
+        <label class="inline"><input type="checkbox" id="use-pace" checked /> Pace</label>
+        <label class="inline"><input type="checkbox" id="use-injuries" checked /> Injuries</label>
+      </fieldset>
       <button type="submit" id="bet-btn">Run betting backtest</button>
     </form>
     <div class="status" id="bet-status">Ready for betting backtest.</div>
@@ -453,6 +458,8 @@
         min_edge: edgeRaw === "" ? null : Number(edgeRaw),
         bankroll: Number(document.getElementById("bankroll").value) || 10000,
         markets,
+        use_pace: document.getElementById("use-pace").checked,
+        use_injuries: document.getElementById("use-injuries").checked,
       };
       setBusy(true, "Tuning edge and simulating bets…");
       betStatus.classList.remove("error");

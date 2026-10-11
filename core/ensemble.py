@@ -110,6 +110,8 @@ class EnsembleModel:
         *,
         is_neutral: bool = False,
         rest: Optional[RestContext] = None,
+        margin_adj: float = 0.0,
+        pace_scale: float = 1.0,
     ) -> float:
         hca_elo = 0.0 if is_neutral else self.config.home_advantage_elo
         elo_diff = self.blended_elo(home_team_id) + hca_elo - self.blended_elo(away_team_id)
@@ -121,6 +123,8 @@ class EnsembleModel:
                 b2b_penalty=self.config.b2b_penalty,
                 rest3_bonus=self.config.rest3_bonus,
             )
+        # Pace stretches point margins slightly when both teams run.
+        margin = margin * float(pace_scale) + float(margin_adj)
         return float(margin)
 
     def predict_proba(
@@ -130,9 +134,16 @@ class EnsembleModel:
         *,
         is_neutral: bool = False,
         rest: Optional[RestContext] = None,
+        margin_adj: float = 0.0,
+        pace_scale: float = 1.0,
     ) -> float:
         mu = self.expected_margin(
-            home_team_id, away_team_id, is_neutral=is_neutral, rest=rest
+            home_team_id,
+            away_team_id,
+            is_neutral=is_neutral,
+            rest=rest,
+            margin_adj=margin_adj,
+            pace_scale=pace_scale,
         )
         # P(home win) ≈ P(margin > 0)
         return float(1.0 - norm.cdf(0.0, loc=mu, scale=self.config.margin_sigma))
@@ -145,9 +156,16 @@ class EnsembleModel:
         *,
         is_neutral: bool = False,
         rest: Optional[RestContext] = None,
+        margin_adj: float = 0.0,
+        pace_scale: float = 1.0,
     ) -> float:
         mu = self.expected_margin(
-            home_team_id, away_team_id, is_neutral=is_neutral, rest=rest
+            home_team_id,
+            away_team_id,
+            is_neutral=is_neutral,
+            rest=rest,
+            margin_adj=margin_adj,
+            pace_scale=pace_scale,
         )
         threshold = -float(home_spread_line)
         return float(1.0 - norm.cdf(threshold, loc=mu, scale=self.config.margin_sigma))

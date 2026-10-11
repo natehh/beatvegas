@@ -96,6 +96,8 @@ class TotalsModel:
         away_team_id: str,
         *,
         rest: Optional[RestContext] = None,
+        pace_scale: float = 1.0,
+        total_adj: float = 0.0,
     ) -> float:
         home_pts = self.expected_team_points(home_team_id, away_team_id, is_home=True)
         away_pts = self.expected_team_points(away_team_id, home_team_id, is_home=False)
@@ -109,6 +111,7 @@ class TotalsModel:
                 total += self.config.rest3_total_boost
             if rest.away_days_rest >= 3:
                 total += self.config.rest3_total_boost
+        total = total * float(pace_scale) + float(total_adj)
         return float(total)
 
     def over_prob(
@@ -118,8 +121,16 @@ class TotalsModel:
         line: float,
         *,
         rest: Optional[RestContext] = None,
+        pace_scale: float = 1.0,
+        total_adj: float = 0.0,
     ) -> float:
-        mu = self.expected_total(home_team_id, away_team_id, rest=rest)
+        mu = self.expected_total(
+            home_team_id,
+            away_team_id,
+            rest=rest,
+            pace_scale=pace_scale,
+            total_adj=total_adj,
+        )
         # P(total > line). For .5 lines pushes are impossible.
         return float(1.0 - norm.cdf(float(line), loc=mu, scale=self.config.total_sigma))
 

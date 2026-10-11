@@ -9,9 +9,11 @@ from typing import Literal, Optional, Sequence
 import numpy as np
 
 from core.ensemble import EnsembleConfig, EnsembleModel
+from core.injuries import InjuryConfig, InjuryListing, InjuryModel, PlayerMinuteLine, normalize_player_name
 from core.markets import MarketPricer
 from core.models import SeasonSchedule
 from core.odds import EdgeOpportunity, american_to_decimal, fair_probs_from_american, kelly_fraction
+from core.pace import PaceConfig, PaceModel, PaceObservation
 from core.totals import TotalsConfig, TotalsModel
 
 
@@ -97,6 +99,13 @@ class BettingConfig:
     totals_market_shrink: float = 0.25
     totals_home_boost: float = 1.5
     totals_b2b_penalty: float = 2.0
+    # Pace / injuries
+    use_pace: bool = True
+    pace_ema_alpha: float = 0.15
+    use_injuries: bool = True
+    injury_mpg_coeff: float = 4.0
+    injury_total_coeff: float = 2.5
+    injury_questionable_weight: float = 0.25
 
 
 def calibrate_probs(model_probs: np.ndarray, outcomes: np.ndarray) -> tuple[float, float]:
@@ -157,6 +166,10 @@ class BettingResult:
                 "fast_k": self.config.fast_k,
                 "b2b_penalty": self.config.b2b_penalty,
                 "use_rest": self.config.use_rest,
+                "use_pace": self.config.use_pace,
+                "use_injuries": self.config.use_injuries,
+                "injury_mpg_coeff": self.config.injury_mpg_coeff,
+                "pace_ema_alpha": self.config.pace_ema_alpha,
             },
             "metrics": self.metrics,
             "final_bankroll": self.final_bankroll,
@@ -302,9 +315,34 @@ def _copy_cfg(cfg: BettingConfig, **overrides) -> BettingConfig:
         "totals_market_shrink": cfg.totals_market_shrink,
         "totals_home_boost": cfg.totals_home_boost,
         "totals_b2b_penalty": cfg.totals_b2b_penalty,
+        "use_pace": cfg.use_pace,
+        "pace_ema_alpha": cfg.pace_ema_alpha,
+        "use_injuries": cfg.use_injuries,
+        "injury_mpg_coeff": cfg.injury_mpg_coeff,
+        "injury_total_coeff": cfg.injury_total_coeff,
+        "injury_questionable_weight": cfg.injury_questionable_weight,
     }
     data.update(overrides)
     return BettingConfig(**data)
+
+
+def _seed_injury_minutes(model: InjuryModel, prior_mpg: Optional[dict[str, dict]]) -> None:
+    if not prior_mpg:
+        return
+    for row in prior_mpg.values():
+        player = str(row.get("player", "")).strip()
+        if not player:
+            continue
+        try:
+            mpg = float(row.get("mpg", 0.0))
+        except (TypeError, ValueError):
+            continue
+        key = normalize_player_name(player)
+        if key:
+            model.minutes.mpg[key] = mpg
+            team_id = str(row.get("team_id", "") or "")
+            if team_id:
+                model.minutes.team_of[key] = team_id
 
 
 def _totals_opportunities(
@@ -316,8 +354,17 @@ def _totals_opportunities(
     under_odds: float,
     *,
     rest=None,
+    pace_scale: float = 1.0,
+    total_adj: float = 0.0,
 ) -> list[EdgeOpportunity]:
-    raw_over = totals.over_prob(home_id, away_id, line, rest=rest)
+    raw_over = totals.over_prob(
+        home_id,
+        away_id,
+        line,
+        rest=rest,
+        pace_scale=pace_scale,
+        total_adj=total_adj,
+    )
     fair_over, fair_under = fair_probs_from_american(over_odds, under_odds)
     model_over = totals.shrink_to_market(raw_over, fair_over)
     model_under = 1.0 - model_over
@@ -357,10 +404,17 @@ class BettingEngine:
         *,
         config: Optional[BettingConfig] = None,
         calibrate_sigma: bool = True,
+        pace_observations: Optional[Sequence[PaceObservation]] = None,
+        prior_pace_observations: Optional[Sequence[PaceObservation]] = None,
+        injuries_by_date: Optional[dict[str, list[InjuryListing]]] = None,
+        prior_player_mpg: Optional[dict[str, dict]] = None,
+        minute_lines: Optional[Sequence[PlayerMinuteLine]] = None,
     ) -> BettingResult:
         cfg = config or self.config
         need_side = any(m in cfg.markets for m in ("moneyline", "spread"))
         need_total = "total" in cfg.markets
+        use_pace = bool(cfg.use_pace and (pace_observations or prior_pace_observations))
+        use_injuries = bool(cfg.use_injuries and injuries_by_date is not None)
 
         model = _ensemble_from_config(cfg) if need_side else None
         totals = TotalsModel(
@@ -373,6 +427,33 @@ class BettingEngine:
                 rest3_total_boost=0.5 if cfg.use_rest else 0.0,
             )
         )
+        pace_model = PaceModel(PaceConfig(ema_alpha=cfg.pace_ema_alpha)) if use_pace else None
+        injury_model = (
+            InjuryModel(
+                InjuryConfig(
+                    mpg_coeff=cfg.injury_mpg_coeff,
+                    total_coeff=cfg.injury_total_coeff,
+                    questionable_weight=cfg.injury_questionable_weight,
+                )
+            )
+            if use_injuries
+            else None
+        )
+        if injury_model is not None:
+            _seed_injury_minutes(injury_model, prior_player_mpg)
+
+        pace_by_game = {
+            (p.date, p.home_team_id, p.away_team_id): p
+            for p in (pace_observations or [])
+        }
+        # Also index by sorted teams for lookup when home/away encoding differed at fetch
+        pace_by_sorted = {
+            (p.date, *sorted([p.home_team_id, p.away_team_id])): p
+            for p in (pace_observations or [])
+        }
+        minutes_by_game: dict[tuple, list[PlayerMinuteLine]] = {}
+        for ln in minute_lines or []:
+            minutes_by_game.setdefault((ln.date, ln.team_id), []).append(ln)
 
         if prior_schedule is not None:
             team_ids = [t.id for t in prior_schedule.teams]
@@ -392,12 +473,20 @@ class BettingEngine:
                 if calibrate_sigma:
                     tsigma = totals.calibrate_sigma(prior_schedule.completed_games())
                     cfg = _copy_cfg(cfg, totals_sigma=tsigma)
+            if pace_model is not None and prior_pace_observations:
+                pace_model.fit(prior_pace_observations, team_ids)
+                for t in season_schedule.teams:
+                    pace_model.ensure_team(t.id)
+                pace_model.regress_toward_mean([t.id for t in season_schedule.teams])
         else:
             if model is not None:
                 model.ensure_teams([t.id for t in season_schedule.teams])
             if need_total:
                 for t in season_schedule.teams:
                     totals.ensure_team(t.id)
+            if pace_model is not None:
+                for t in season_schedule.teams:
+                    pace_model.ensure_team(t.id)
 
         from core.rest import RestTracker
 
@@ -415,6 +504,17 @@ class BettingEngine:
 
         for g in season_schedule.completed_games():
             rest = rest_tracker.context(g) if cfg.use_rest else None
+            pace_scale = 1.0
+            if pace_model is not None:
+                pace_scale = pace_model.pace_scale(g.home_team_id, g.away_team_id)
+            margin_adj = 0.0
+            total_adj = 0.0
+            if injury_model is not None and injuries_by_date is not None:
+                listings = injuries_by_date.get(g.date.isoformat(), [])
+                impact = injury_model.impact(g.home_team_id, g.away_team_id, listings)
+                margin_adj = impact.margin_adj
+                total_adj = impact.total_adj
+
             o = odds_by_teams_date.get((g.date, g.home_team_id, g.away_team_id))
             opps: list[EdgeOpportunity] = []
             if o is not None:
@@ -427,6 +527,8 @@ class BettingEngine:
                             o.away_ml,
                             is_neutral=g.is_neutral,
                             rest=rest,
+                            margin_adj=margin_adj,
+                            pace_scale=pace_scale if cfg.use_pace else 1.0,
                         )
                     )
                 if pricer is not None and "spread" in cfg.markets:
@@ -440,6 +542,8 @@ class BettingEngine:
                             o.away_spread_odds,
                             is_neutral=g.is_neutral,
                             rest=rest,
+                            margin_adj=margin_adj,
+                            pace_scale=pace_scale if cfg.use_pace else 1.0,
                         )
                     )
                 if need_total and o.has_totals:
@@ -452,6 +556,8 @@ class BettingEngine:
                             float(o.over_odds),  # type: ignore[arg-type]
                             float(o.under_odds),  # type: ignore[arg-type]
                             rest=rest,
+                            pace_scale=pace_scale if cfg.use_pace else 1.0,
+                            total_adj=total_adj if cfg.use_injuries else 0.0,
                         )
                     )
 
@@ -544,6 +650,26 @@ class BettingEngine:
                     model.update(g)
                 if need_total:
                     totals.update(g)
+                if pace_model is not None:
+                    obs = pace_by_game.get((g.date, g.home_team_id, g.away_team_id))
+                    if obs is None:
+                        obs = pace_by_sorted.get(
+                            (g.date, *sorted([g.home_team_id, g.away_team_id]))
+                        )
+                    if obs is not None:
+                        # Ensure home/away match the game for bookkeeping
+                        pace_model.update(
+                            PaceObservation(
+                                date=g.date,
+                                home_team_id=g.home_team_id,
+                                away_team_id=g.away_team_id,
+                                pace=obs.pace,
+                            )
+                        )
+                if injury_model is not None:
+                    for tid in (g.home_team_id, g.away_team_id):
+                        for ln in minutes_by_game.get((g.date, tid), []):
+                            injury_model.minutes.update_line(ln)
 
         return BettingResult(
             config=cfg,
@@ -560,6 +686,11 @@ class BettingEngine:
         *,
         markets: tuple[MarketName, ...] = ("moneyline", "spread"),
         base: Optional[BettingConfig] = None,
+        pace_observations: Optional[Sequence[PaceObservation]] = None,
+        prior_pace_observations: Optional[Sequence[PaceObservation]] = None,
+        injuries_by_date: Optional[dict[str, list[InjuryListing]]] = None,
+        prior_player_mpg: Optional[dict[str, dict]] = None,
+        minute_lines: Optional[Sequence[PlayerMinuteLine]] = None,
     ) -> tuple[float, float, float]:
         base = base or self.config
         shadow_cfg = _copy_cfg(
@@ -572,7 +703,17 @@ class BettingEngine:
             calib_a=1.0,
             calib_b=0.0,
         )
-        result = self.run(prior_schedule, tune_schedule, tune_odds, config=shadow_cfg)
+        result = self.run(
+            prior_schedule,
+            tune_schedule,
+            tune_odds,
+            config=shadow_cfg,
+            pace_observations=pace_observations,
+            prior_pace_observations=prior_pace_observations,
+            injuries_by_date=injuries_by_date,
+            prior_player_mpg=prior_player_mpg,
+            minute_lines=minute_lines,
+        )
         # Prefer one side per market to avoid double-counting complementary prices.
         preferred_sides = {"moneyline": "home", "spread": "home", "total": "over"}
         sample = [
@@ -598,10 +739,27 @@ def tune_min_edge(
     *,
     edges: Sequence[float] = (0.01, 0.02, 0.03, 0.04, 0.05, 0.07, 0.10),
     base: Optional[BettingConfig] = None,
+    pace_observations: Optional[Sequence[PaceObservation]] = None,
+    prior_pace_observations: Optional[Sequence[PaceObservation]] = None,
+    injuries_by_date: Optional[dict[str, list[InjuryListing]]] = None,
+    prior_player_mpg: Optional[dict[str, dict]] = None,
+    minute_lines: Optional[Sequence[PlayerMinuteLine]] = None,
 ) -> tuple[float, list[dict], BettingConfig]:
     base = base or BettingConfig()
+    feature_kwargs = dict(
+        pace_observations=pace_observations,
+        prior_pace_observations=prior_pace_observations,
+        injuries_by_date=injuries_by_date,
+        prior_player_mpg=prior_player_mpg,
+        minute_lines=minute_lines,
+    )
     a, b, sigma = engine.fit_calibration(
-        prior_schedule, tune_schedule, tune_odds, markets=base.markets, base=base
+        prior_schedule,
+        tune_schedule,
+        tune_odds,
+        markets=base.markets,
+        base=base,
+        **feature_kwargs,
     )
     fitted = _copy_cfg(
         base,
@@ -617,7 +775,12 @@ def tune_min_edge(
     for e in edges:
         cfg = _copy_cfg(fitted, min_edge=float(e))
         result = engine.run(
-            prior_schedule, tune_schedule, tune_odds, config=cfg, calibrate_sigma=False
+            prior_schedule,
+            tune_schedule,
+            tune_odds,
+            config=cfg,
+            calibrate_sigma=False,
+            **feature_kwargs,
         )
         m = result.metrics
         n = m.get("n_decided", 0)

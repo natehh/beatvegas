@@ -84,7 +84,17 @@ Locked defaults in `core/defaults.py` (ML+spread, elo_blend=0.7, rest on, shrink
 | 2024–25 holdout | ≈ **+0.4%** | ~680 | flat 1% units, $10k roll |
 
 A flashier spread-only +1.9% holdout config was **rejected** (tune ROI ≈ −36%, n≈50 — overfit).
-Closing lines are still tough; next levers are injuries/minutes and a real totals model.
+
+### Pace + injuries
+
+Defaults also enable:
+- **Pace** — BRef advanced team gamelog EMA; scales expected totals (and slightly stretches margins)
+- **Injuries** — official NBA injury reports (`nbainjuries`) weighted by prior-season MPG
+
+```bash
+python scripts/hillclimb_pace_injuries.py
+python scripts/betting_cli.py --no-pace --no-injuries   # ablation
+```
 
 ## Tests
 

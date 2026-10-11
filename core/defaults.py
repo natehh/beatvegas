@@ -8,6 +8,7 @@ from core.betting import BettingConfig
 # Spread-only +1.9% holdout configs were rejected: tune ROI ~-36% (overfit).
 # This config was ~flat/slightly positive on holdout with hundreds of bets.
 # Totals hillclimb was clearly worse (~-10% holdout) — keep totals opt-in only.
+# Pace + injuries default on; hillclimb may tighten coeffs after feature fetch.
 DEFAULT_BETTING_CONFIG = BettingConfig(
     markets=("moneyline", "spread"),
     min_edge=0.03,
@@ -31,4 +32,11 @@ DEFAULT_BETTING_CONFIG = BettingConfig(
     totals_market_shrink=0.25,
     totals_home_boost=1.5,
     totals_b2b_penalty=2.0,
+    # Pace / injuries
+    use_pace=True,
+    pace_ema_alpha=0.15,
+    use_injuries=True,
+    injury_mpg_coeff=4.0,
+    injury_total_coeff=2.5,
+    injury_questionable_weight=0.25,
 )

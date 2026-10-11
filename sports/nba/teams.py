@@ -42,6 +42,7 @@ TEAM_NAME_TO_ABBR: dict[str, str] = {
 ABBR_ALIASES: dict[str, str] = {
     "BRK": "BKN",
     "PHO": "PHX",
+    "CHO": "CHA",
     "GS": "GSW",
     "NO": "NOP",
     "NY": "NYK",
@@ -49,6 +50,26 @@ ABBR_ALIASES: dict[str, str] = {
     "UTAH": "UTA",
     "WSH": "WAS",
 }
+
+# Our canonical abbr → Basketball-Reference URL slug.
+TO_BREF_ABBR: dict[str, str] = {
+    "BKN": "BRK",
+    "CHA": "CHO",
+    "PHX": "PHO",
+}
+
+# Basketball-Reference slug → our canonical abbr.
+FROM_BREF_ABBR: dict[str, str] = {v: k for k, v in TO_BREF_ABBR.items()}
+
+
+def to_bref_abbr(abbr: str) -> str:
+    a = normalize_abbr(abbr)
+    return TO_BREF_ABBR.get(a, a)
+
+
+def from_bref_abbr(abbr: str) -> str:
+    a = abbr.strip().upper()
+    return normalize_abbr(FROM_BREF_ABBR.get(a, a))
 
 
 def normalize_abbr(abbr: str) -> str:
