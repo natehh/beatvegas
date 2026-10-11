@@ -60,7 +60,37 @@
       text-transform: uppercase;
       letter-spacing: 0.04em;
     }
-    select, input {
+    label.inline {
+      flex-direction: row;
+      align-items: center;
+      gap: 0.4rem;
+      text-transform: none;
+      letter-spacing: 0;
+      font-size: 0.95rem;
+      color: var(--ink);
+      cursor: pointer;
+    }
+    fieldset.mode-field {
+      margin: 0;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 0.35rem 0.7rem 0.55rem;
+      background: #fff;
+    }
+    fieldset.mode-field legend {
+      font-size: 0.8rem;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      padding: 0 0.25rem;
+    }
+    fieldset.mode-field {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75rem 1rem;
+      align-items: center;
+    }
+    select, input[type="number"] {
       font: inherit;
       color: var(--ink);
       background: #fff;
@@ -68,6 +98,11 @@
       border-radius: 6px;
       padding: 0.55rem 0.7rem;
       min-width: 9rem;
+    }
+    input[type="radio"] {
+      accent-color: var(--accent);
+      width: 1rem;
+      height: 1rem;
     }
     button {
       font: inherit;
@@ -159,13 +194,11 @@
           <option value="2023-24">2023-24</option>
         </select>
       </label>
-      <label>
-        Mode
-        <select id="mode" name="mode">
-          <option value="preseason" selected>Preseason</option>
-          <option value="rolling">Rolling</option>
-        </select>
-      </label>
+      <fieldset class="mode-field">
+        <legend>Mode</legend>
+        <label class="inline"><input type="radio" name="mode" value="preseason" checked /> Preseason</label>
+        <label class="inline"><input type="radio" name="mode" value="rolling" /> Rolling</label>
+      </fieldset>
       <label>
         Simulations
         <input id="n_sims" name="n_sims" type="number" min="100" max="50000" step="100" value="5000" />
@@ -246,9 +279,10 @@
 
     document.getElementById("run-form").addEventListener("submit", async (e) => {
       e.preventDefault();
+      const modeInput = document.querySelector('input[name="mode"]:checked');
       const body = {
         season: document.getElementById("season").value,
-        mode: document.getElementById("mode").value,
+        mode: modeInput ? modeInput.value : "preseason",
         n_sims: Number(document.getElementById("n_sims").value) || 5000,
       };
       setBusy(true, "Fetching data and running simulation…");

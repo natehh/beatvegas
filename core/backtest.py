@@ -257,12 +257,18 @@ class BacktestRunner:
             expected_wins = mc.expected_wins
             win_samples = mc.win_samples
         else:
+            # Full-season rolling: expected wins = sum of one-step probs.
+            # Build percentile bands by resampling each game as Bernoulli(p).
             expected_wins = expected_wins_sum
-            # Degenerate samples around expectation for percentile columns.
+            rng = np.random.default_rng(seed)
             win_samples = {
-                tid: np.full(max(n_sims, 1), expected_wins_sum.get(tid, 0.0))
-                for tid in expected_wins_sum
+                tid: np.zeros(n_sims, dtype=float) for tid in expected_wins_sum
             }
+            for pred in preds:
+                draws = rng.random(n_sims)
+                home_win = draws < pred.p_home
+                win_samples[pred.home_team_id] += home_win.astype(float)
+                win_samples[pred.away_team_id] += (~home_win).astype(float)
 
         # Rebuild a SimulationResult-like structure for the table.
         sim_result = SimulationResult(
