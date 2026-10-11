@@ -1,0 +1,470 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>beatvegas — team W/L model</title>
+  <style>
+    :root {
+      --bg: #f3efe6;
+      --ink: #14201a;
+      --muted: #5c6b63;
+      --accent: #0b6e4f;
+      --accent-ink: #f7fff9;
+      --line: #c9d0c8;
+      --card: rgba(255, 255, 255, 0.55);
+      --bad: #8b2e2e;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(1200px 500px at 10% -10%, #d9e7df 0%, transparent 55%),
+        radial-gradient(900px 400px at 100% 0%, #e7dfc8 0%, transparent 50%),
+        var(--bg);
+      min-height: 100vh;
+    }
+    main {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 2.5rem 1.25rem 4rem;
+    }
+    h1 {
+      font-family: "Fraunces", Georgia, serif;
+      font-weight: 600;
+      font-size: clamp(2rem, 4vw, 2.8rem);
+      margin: 0 0 0.35rem;
+      letter-spacing: -0.02em;
+    }
+    .lede {
+      color: var(--muted);
+      max-width: 40rem;
+      margin: 0 0 1.75rem;
+      line-height: 1.5;
+    }
+    form.controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75rem 1rem;
+      align-items: end;
+      margin-bottom: 1.25rem;
+    }
+    label {
+      display: flex;
+      flex-direction: column;
+      gap: 0.3rem;
+      font-size: 0.8rem;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    label.inline {
+      flex-direction: row;
+      align-items: center;
+      gap: 0.4rem;
+      text-transform: none;
+      letter-spacing: 0;
+      font-size: 0.95rem;
+      color: var(--ink);
+      cursor: pointer;
+    }
+    fieldset.mode-field {
+      margin: 0;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 0.35rem 0.7rem 0.55rem;
+      background: #fff;
+    }
+    fieldset.mode-field legend {
+      font-size: 0.8rem;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      padding: 0 0.25rem;
+    }
+    fieldset.mode-field {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75rem 1rem;
+      align-items: center;
+    }
+    select, input[type="number"] {
+      font: inherit;
+      color: var(--ink);
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 0.55rem 0.7rem;
+      min-width: 9rem;
+    }
+    input[type="radio"] {
+      accent-color: var(--accent);
+      width: 1rem;
+      height: 1rem;
+    }
+    button {
+      font: inherit;
+      font-weight: 600;
+      border: none;
+      border-radius: 6px;
+      padding: 0.65rem 1.1rem;
+      cursor: pointer;
+      background: var(--accent);
+      color: var(--accent-ink);
+    }
+    button.secondary {
+      background: transparent;
+      color: var(--accent);
+      border: 1px solid var(--accent);
+    }
+    button:disabled { opacity: 0.55; cursor: wait; }
+    .metrics {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+      margin: 0 0 1.25rem;
+    }
+    .metric {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 0.7rem 0.9rem;
+      min-width: 7.5rem;
+    }
+    .metric .k { font-size: 0.75rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+    .metric .v { font-size: 1.25rem; font-weight: 650; margin-top: 0.15rem; font-variant-numeric: tabular-nums; }
+    .status {
+      min-height: 1.4rem;
+      color: var(--muted);
+      margin-bottom: 0.75rem;
+      font-size: 0.95rem;
+    }
+    .status.error { color: var(--bad); }
+    .table-wrap {
+      overflow-x: auto;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: rgba(255,255,255,0.65);
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-variant-numeric: tabular-nums;
+    }
+    th, td {
+      text-align: left;
+      padding: 0.65rem 0.8rem;
+      border-bottom: 1px solid var(--line);
+      white-space: nowrap;
+    }
+    th {
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--muted);
+      background: rgba(243, 239, 230, 0.8);
+      position: sticky;
+      top: 0;
+    }
+    tr:last-child td { border-bottom: none; }
+    td.num { text-align: right; }
+    th.num { text-align: right; }
+    .err-pos { color: #0b6e4f; }
+    .err-neg { color: var(--bad); }
+  </style>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600&family=IBM+Plex+Sans:wght@400;600&display=swap" rel="stylesheet" />
+</head>
+<body>
+  <main>
+    <h1>beatvegas</h1>
+    <p class="lede">
+      Sport-open team win/loss modeling. NBA first: Elo ratings, schedule simulation,
+      historical odds backtests, and bankroll-aware betting rules.
+    </p>
+
+    <form class="controls" id="run-form">
+      <label>
+        Season
+        <select id="season" name="season">
+          <option value="2024-25" selected>2024-25</option>
+          <option value="2023-24">2023-24</option>
+        </select>
+      </label>
+      <fieldset class="mode-field">
+        <legend>Mode</legend>
+        <label class="inline"><input type="radio" name="mode" value="preseason" checked /> Preseason</label>
+        <label class="inline"><input type="radio" name="mode" value="rolling" /> Rolling</label>
+      </fieldset>
+      <label>
+        Simulations
+        <input id="n_sims" name="n_sims" type="number" min="100" max="50000" step="100" value="5000" />
+      </label>
+      <button type="submit" id="run-btn">Run model</button>
+      <button type="button" class="secondary" id="refresh-btn">Refresh data</button>
+    </form>
+
+    <div class="status" id="status">Ready.</div>
+    <div class="metrics" id="metrics" hidden></div>
+    <div class="table-wrap" id="table-wrap" hidden>
+      <table>
+        <thead>
+          <tr>
+            <th>Team</th>
+            <th class="num">Proj W</th>
+            <th class="num">Proj L</th>
+            <th class="num">Actual W</th>
+            <th class="num">Actual L</th>
+            <th class="num">Error</th>
+            <th class="num">P25</th>
+            <th class="num">P50</th>
+            <th class="num">P75</th>
+          </tr>
+        </thead>
+        <tbody id="tbody"></tbody>
+      </table>
+    </div>
+
+    <h2 style="margin:2.5rem 0 0.5rem;font-family:Fraunces,Georgia,serif;font-weight:600;">Betting backtest</h2>
+    <p class="lede">
+      Tune a minimum probability edge on the prior season, then simulate quarter-Kelly
+      moneyline + spread bets on the holdout season against free historical odds.
+    </p>
+    <form class="controls" id="bet-form">
+      <label>
+        Holdout season
+        <select id="bet-season">
+          <option value="2024-25" selected>2024-25</option>
+          <option value="2023-24">2023-24</option>
+        </select>
+      </label>
+      <label>
+        Tune season
+        <select id="tune-season">
+          <option value="2023-24" selected>2023-24</option>
+          <option value="2022-23">2022-23</option>
+        </select>
+      </label>
+      <label>
+        Min edge (blank = auto)
+        <input id="min-edge" type="number" min="0" max="0.25" step="0.01" placeholder="auto" />
+      </label>
+      <label>
+        Bankroll
+        <input id="bankroll" type="number" min="100" step="100" value="10000" />
+      </label>
+      <button type="submit" id="bet-btn">Run betting backtest</button>
+    </form>
+    <div class="status" id="bet-status">Ready for betting backtest.</div>
+    <div class="metrics" id="bet-metrics" hidden></div>
+    <div class="table-wrap" id="bet-table-wrap" hidden>
+      <table>
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Market</th>
+            <th>Side</th>
+            <th class="num">Edge</th>
+            <th class="num">Stake</th>
+            <th>Odds</th>
+            <th>Result</th>
+            <th class="num">Profit</th>
+            <th class="num">Bankroll</th>
+          </tr>
+        </thead>
+        <tbody id="bet-tbody"></tbody>
+      </table>
+    </div>
+  </main>
+  <script>
+    const statusEl = document.getElementById("status");
+    const metricsEl = document.getElementById("metrics");
+    const tableWrap = document.getElementById("table-wrap");
+    const tbody = document.getElementById("tbody");
+    const runBtn = document.getElementById("run-btn");
+    const refreshBtn = document.getElementById("refresh-btn");
+    const betBtn = document.getElementById("bet-btn");
+    const betStatus = document.getElementById("bet-status");
+    const betMetrics = document.getElementById("bet-metrics");
+    const betTableWrap = document.getElementById("bet-table-wrap");
+    const betTbody = document.getElementById("bet-tbody");
+
+    function setBusy(busy, msg) {
+      runBtn.disabled = busy;
+      refreshBtn.disabled = busy;
+      betBtn.disabled = busy;
+      statusEl.classList.remove("error");
+      statusEl.textContent = msg || (busy ? "Working…" : "Ready.");
+    }
+
+    function renderMetrics(m, meta) {
+      const items = [
+        ["MAE (wins)", m.mae_wins],
+        ["RMSE (wins)", m.rmse_wins],
+        ["Rank corr", m.rank_corr],
+      ];
+      if (m.n_games) {
+        items.push(["Brier", m.brier], ["Log loss", m.log_loss], ["Game acc", m.accuracy]);
+      }
+      items.push(["Games", meta.n_games], ["Sims", meta.n_sims]);
+      metricsEl.hidden = false;
+      metricsEl.innerHTML = items.map(([k, v]) =>
+        `<div class="metric"><div class="k">${k}</div><div class="v">${v ?? "—"}</div></div>`
+      ).join("");
+    }
+
+    function renderTeams(teams) {
+      tableWrap.hidden = false;
+      tbody.innerHTML = teams.map(t => {
+        const errClass = t.error > 0.05 ? "err-pos" : (t.error < -0.05 ? "err-neg" : "");
+        return `<tr>
+          <td>${t.team}</td>
+          <td class="num">${t.expected_wins.toFixed(1)}</td>
+          <td class="num">${t.expected_losses.toFixed(1)}</td>
+          <td class="num">${t.actual_wins}</td>
+          <td class="num">${t.actual_losses}</td>
+          <td class="num ${errClass}">${t.error > 0 ? "+" : ""}${t.error.toFixed(1)}</td>
+          <td class="num">${t.p25_wins.toFixed(1)}</td>
+          <td class="num">${t.p50_wins.toFixed(1)}</td>
+          <td class="num">${t.p75_wins.toFixed(1)}</td>
+        </tr>`;
+      }).join("");
+    }
+
+    document.getElementById("run-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const modeInput = document.querySelector('input[name="mode"]:checked');
+      const body = {
+        season: document.getElementById("season").value,
+        mode: modeInput ? modeInput.value : "preseason",
+        n_sims: Number(document.getElementById("n_sims").value) || 5000,
+      };
+      setBusy(true, "Fetching data and running simulation…");
+      try {
+        const res = await fetch("/api/nba/simulate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || "Simulation failed");
+        renderMetrics(data.metrics, data);
+        renderTeams(data.teams);
+        setBusy(false, `${data.mode} backtest for ${data.season} (prior ${data.prior_season}).`);
+      } catch (err) {
+        statusEl.classList.add("error");
+        statusEl.textContent = String(err.message || err);
+        runBtn.disabled = false;
+        refreshBtn.disabled = false;
+      }
+    });
+
+    refreshBtn.addEventListener("click", async () => {
+      const season = document.getElementById("season").value;
+      setBusy(true, "Refreshing cache from stats.nba.com…");
+      try {
+        const res = await fetch("/api/nba/refresh", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ seasons: [priorSeason(season), season] }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || "Refresh failed");
+        const err = (data.refreshed || []).find(r => r.error);
+        if (err) throw new Error(`${err.season}: ${err.error}`);
+        setBusy(false, `Cache refreshed for ${(data.refreshed || []).map(r => r.season).join(", ")}.`);
+      } catch (err) {
+        statusEl.classList.add("error");
+        statusEl.textContent = String(err.message || err);
+        runBtn.disabled = false;
+        refreshBtn.disabled = false;
+      }
+    });
+
+    function priorSeason(season) {
+      const start = Number(season.split("-")[0]);
+      return `${start - 1}-${String(start).slice(-2)}`;
+    }
+
+    function renderBetMetrics(data) {
+      const m = data.metrics || {};
+      const items = [
+        ["Min edge", data.selected_min_edge],
+        ["Bets", m.n_decided],
+        ["Hit rate", m.hit_rate],
+        ["ROI", m.roi],
+        ["Profit", m.profit],
+        ["Final bankroll", m.final_bankroll],
+        ["Max DD", m.max_drawdown],
+        ["Odds match", data.odds_match_rate],
+      ];
+      betMetrics.hidden = false;
+      betMetrics.innerHTML = items.map(([k, v]) => {
+        let display = v;
+        if (k === "ROI" || k === "Hit rate" || k === "Max DD" || k === "Odds match") {
+          display = typeof v === "number" ? `${(v * 100).toFixed(1)}%` : v;
+        } else if (typeof v === "number" && (k === "Profit" || k === "Final bankroll")) {
+          display = v.toLocaleString(undefined, { maximumFractionDigits: 0 });
+        }
+        return `<div class="metric"><div class="k">${k}</div><div class="v">${display ?? "—"}</div></div>`;
+      }).join("");
+    }
+
+    function renderBets(bets) {
+      betTableWrap.hidden = false;
+      betTbody.innerHTML = (bets || []).map(b => {
+        const cls = b.profit > 0 ? "err-pos" : (b.profit < 0 ? "err-neg" : "");
+        const result = b.won === true ? "W" : (b.won === false ? "L" : "P");
+        return `<tr>
+          <td>${b.date}</td>
+          <td>${b.market}</td>
+          <td>${b.side}${b.line != null ? " " + b.line : ""}</td>
+          <td class="num">${(b.edge * 100).toFixed(1)}%</td>
+          <td class="num">${b.stake.toFixed(0)}</td>
+          <td>${b.american_odds > 0 ? "+" : ""}${b.american_odds}</td>
+          <td>${result}</td>
+          <td class="num ${cls}">${b.profit > 0 ? "+" : ""}${b.profit.toFixed(0)}</td>
+          <td class="num">${b.bankroll_after.toFixed(0)}</td>
+        </tr>`;
+      }).join("");
+    }
+
+    document.getElementById("bet-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const edgeRaw = document.getElementById("min-edge").value;
+      const body = {
+        season: document.getElementById("bet-season").value,
+        tune_season: document.getElementById("tune-season").value,
+        min_edge: edgeRaw === "" ? null : Number(edgeRaw),
+        bankroll: Number(document.getElementById("bankroll").value) || 10000,
+        markets: ["moneyline", "spread"],
+      };
+      setBusy(true, "Tuning edge and simulating bets…");
+      betStatus.classList.remove("error");
+      betStatus.textContent = "Running betting backtest…";
+      try {
+        const res = await fetch("/api/nba/betting", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || "Betting backtest failed");
+        renderBetMetrics(data);
+        renderBets(data.bets);
+        setBusy(false, "Record model ready.");
+        betStatus.textContent = `Holdout ${data.config ? body.season : body.season}: edge=${data.selected_min_edge}, profit=${data.metrics.profit}`;
+      } catch (err) {
+        betStatus.classList.add("error");
+        betStatus.textContent = String(err.message || err);
+        runBtn.disabled = false;
+        refreshBtn.disabled = false;
+        betBtn.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>
