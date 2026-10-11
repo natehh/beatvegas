@@ -48,16 +48,32 @@ Rules:
 
 ```bash
 python scripts/betting_cli.py --season 2024-25 --tune-season 2023-24
-python scripts/betting_cli.py --season 2024-25 --min-edge 0.03   # skip tuning
+python scripts/betting_cli.py --season 2024-25 --min-edge 0.03   # skip edge search
+python scripts/hillclimb_models.py                               # re-search model knobs
 ```
 
 Totals are deferred until an expected-points model exists.
 
 API: `POST /api/nba/betting` with `{ season, tune_season, min_edge?, bankroll, markets }`.
 
-### Honest baseline (2024–25 holdout)
+### Model stack (v2)
 
-A plain Elo + calibrated edge rule **does not currently beat Yahoo closing-style lines** on 2023–24 tune / 2024–25 holdout (negative ROI). That’s expected: closing markets are strong. The betting stack is there to tune rules and measure progress as the model gets better (injuries, priors, totals, etc.).
+Predictions use an **ensemble**:
+- Dual Elo (slow K=12 + fast K=36) for recency
+- SRS (point differential + SOS)
+- Rest / B2B margin adjustments
+- Outcome calibration + walk-forward `min_edge` tuning
+
+Hillclimb (`python scripts/hillclimb_models.py`) searched shrink / blend / rest / markets.
+Locked defaults in `core/defaults.py` (ML+spread, elo_blend=0.7, rest on, shrink=0):
+
+| Window | ROI | Bets | Notes |
+|--------|-----|------|-------|
+| 2023–24 tune | ≈ −5.3% | ~660 | used only to pick edge |
+| 2024–25 holdout | ≈ **+0.4%** | ~680 | flat 1% units, $10k roll |
+
+A flashier spread-only +1.9% holdout config was **rejected** (tune ROI ≈ −36%, n≈50 — overfit).
+Closing lines are still tough; next levers are injuries/minutes and a real totals model.
 
 ## Tests
 

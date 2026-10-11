@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 
 from core.backtest import BacktestRunner
 from core.betting import BettingConfig, BettingEngine, tune_min_edge
+from core.defaults import DEFAULT_BETTING_CONFIG
 from core.elo import EloConfig
 from sports.nba.adapter import NbaAdapter, prior_season
 from sports.nba.odds import load_odds_for_season, match_rate
@@ -23,7 +24,7 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 _adapter = NbaAdapter()
 _runner = BacktestRunner(elo_config=EloConfig())
-_betting = BettingEngine(elo_config=EloConfig())
+_betting = BettingEngine()
 
 
 class SimulateRequest(BaseModel):
@@ -93,10 +94,18 @@ def nba_betting(req: BettingRequest) -> dict:
 
     markets = tuple(req.markets)
     base = BettingConfig(
-        min_edge=0.03,
+        min_edge=DEFAULT_BETTING_CONFIG.min_edge,
         markets=markets,  # type: ignore[arg-type]
         kelly_fraction=req.kelly_fraction,
         starting_bankroll=req.bankroll,
+        market_shrink=DEFAULT_BETTING_CONFIG.market_shrink,
+        elo_blend=DEFAULT_BETTING_CONFIG.elo_blend,
+        srs_blend=DEFAULT_BETTING_CONFIG.srs_blend,
+        use_rest=DEFAULT_BETTING_CONFIG.use_rest,
+        fast_k=DEFAULT_BETTING_CONFIG.fast_k,
+        slow_k=DEFAULT_BETTING_CONFIG.slow_k,
+        b2b_penalty=DEFAULT_BETTING_CONFIG.b2b_penalty,
+        flat_unit_frac=DEFAULT_BETTING_CONFIG.flat_unit_frac,
     )
 
     tune_grid: list[dict] = []
@@ -104,21 +113,14 @@ def nba_betting(req: BettingRequest) -> dict:
         best_edge, tune_grid, fitted = tune_min_edge(
             _betting, prior_tune, tune_sched, tune_odds, base=base
         )
-        cfg = BettingConfig(
-            min_edge=best_edge,
-            markets=fitted.markets,
-            kelly_fraction=req.kelly_fraction,
-            starting_bankroll=req.bankroll,
-            flat_unit_frac=fitted.flat_unit_frac,
-            calib_a=fitted.calib_a,
-            calib_b=fitted.calib_b,
-            margin_sigma=fitted.margin_sigma,
-            elo_per_point=fitted.elo_per_point,
-        )
+        cfg = fitted
+        cfg.starting_bankroll = req.bankroll
+        cfg.kelly_fraction = req.kelly_fraction
+        cfg.min_edge = best_edge
     else:
         best_edge = req.min_edge
         a, b, sigma = _betting.fit_calibration(
-            prior_tune, tune_sched, tune_odds, markets=markets  # type: ignore[arg-type]
+            prior_tune, tune_sched, tune_odds, markets=markets, base=base  # type: ignore[arg-type]
         )
         cfg = BettingConfig(
             min_edge=best_edge,
@@ -129,6 +131,10 @@ def nba_betting(req: BettingRequest) -> dict:
             calib_a=a,
             calib_b=b,
             margin_sigma=sigma,
+            market_shrink=base.market_shrink,
+            elo_blend=base.elo_blend,
+            srs_blend=base.srs_blend,
+            use_rest=base.use_rest,
         )
 
     result = _betting.run(
