@@ -87,13 +87,16 @@ A flashier spread-only +1.9% holdout config was **rejected** (tune ROI ≈ −36
 
 ### Pace + injuries
 
-Defaults also enable:
-- **Pace** — BRef advanced team gamelog EMA; scales expected totals (and slightly stretches margins)
-- **Injuries** — official NBA injury reports (`nbainjuries`) weighted by prior-season MPG
+| Feature | Default | 2024–25 holdout (walk-forward) |
+|---------|---------|--------------------------------|
+| Baseline (no pace/inj) | — | ≈ **+0.4%** ROI (~680 bets) |
+| **Pace** (BRef EMA, α=0.15) | **on** | ≈ **+0.6%** ROI (~680 bets) |
+| Injuries (NBA reports × prior MPG) | **off** (opt-in) | ≈ −6% to −12% — not locked |
 
 ```bash
 python scripts/hillclimb_pace_injuries.py
-python scripts/betting_cli.py --no-pace --no-injuries   # ablation
+python scripts/betting_cli.py --no-pace          # ablation
+python scripts/betting_cli.py                    # pace on, injuries off
 ```
 
 ## Tests

@@ -51,7 +51,7 @@ class BettingRequest(BaseModel):
     kelly_fraction: float = Field(default=0.25, ge=0.05, le=1.0)
     refresh_odds: bool = False
     use_pace: bool = True
-    use_injuries: bool = True
+    use_injuries: bool = False
 
 
 @app.get("/")
