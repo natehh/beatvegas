@@ -13,13 +13,17 @@ def normalize_player_name(name: str) -> str:
     """Normalize 'Last, First' / 'First Last' / accented names to a match key."""
     text = unicodedata.normalize("NFKD", str(name).strip())
     text = "".join(ch for ch in text if not unicodedata.combining(ch))
-    text = text.lower().replace(".", " ")
+    # Repair common UTF-8→latin1 mojibake leftovers by keeping a-z only tokens later
+    text = text.lower().replace(".", " ").replace("*", " ")
     text = re.sub(r"\s+", " ", text).strip()
     if "," in text:
         last, first = text.split(",", 1)
         text = f"{first.strip()} {last.strip()}"
     # Drop generational suffixes for matching
     text = re.sub(r"\b(jr|sr|ii|iii|iv)\b", "", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    # ASCII-only key so 'porzingis' matches even if source had encoding glitches
+    text = re.sub(r"[^a-z\s]", "", text)
     text = re.sub(r"\s+", " ", text).strip()
     return text
 

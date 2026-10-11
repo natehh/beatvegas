@@ -35,8 +35,10 @@ def fetch_season_player_mpg(season: str, *, delay_s: float = 0.5) -> dict[str, d
     url = f"https://www.basketball-reference.com/leagues/NBA_{end_year}_per_game.html"
     resp = requests.get(url, headers=HEADERS, timeout=45)
     resp.raise_for_status()
+    # BRef is UTF-8; avoid mojibake that breaks injury-name matching.
+    resp.encoding = "utf-8"
     html = resp.text.replace("<!--", "").replace("-->", "")
-    tables = pd.read_html(StringIO(html))
+    tables = pd.read_html(StringIO(html), flavor="lxml")
     if not tables:
         raise RuntimeError(f"No per-game table for {season}")
     df = tables[0]
@@ -46,6 +48,8 @@ def fetch_season_player_mpg(season: str, *, delay_s: float = 0.5) -> dict[str, d
     out: dict[str, dict] = {}
     for _, row in df.iterrows():
         player = str(row.get("Player", "")).strip()
+        # Drop BRef hall-of-fame / active markers
+        player = player.replace("*", "").strip()
         if not player or player == "Player":
             continue
         team_raw = str(row.get("Team", row.get("Tm", ""))).strip().upper()
