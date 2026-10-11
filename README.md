@@ -52,9 +52,20 @@ python scripts/betting_cli.py --season 2024-25 --min-edge 0.03   # skip edge sea
 python scripts/hillclimb_models.py                               # re-search model knobs
 ```
 
-Totals are deferred until an expected-points model exists.
+API: `POST /api/nba/betting` with `{ season, tune_season, min_edge?, bankroll, markets }`
+(`markets` may include `"total"`).
 
-API: `POST /api/nba/betting` with `{ season, tune_season, min_edge?, bankroll, markets }`.
+### Totals (v3)
+
+Expected total from EMA team offense/defense + rest, vs Yahoo O/U lines.
+Hillclimb (`python scripts/hillclimb_totals.py`) over shrink/α/home-boost/rest:
+
+| Market | Holdout ROI | Bets | Verdict |
+|--------|-------------|------|---------|
+| ML+spread (locked) | ≈ **+0.4%** | ~680 | best so far |
+| Totals (best joint) | ≈ **−10%** | ~800 | worse than sides |
+
+Totals are wired in the UI/CLI but **not** the default bet market.
 
 ### Model stack (v2)
 

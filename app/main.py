@@ -43,7 +43,7 @@ class BettingRequest(BaseModel):
     season: str = "2024-25"
     tune_season: str = "2023-24"
     min_edge: Optional[float] = Field(default=None, ge=0.0, le=0.25)
-    markets: list[Literal["moneyline", "spread"]] = Field(
+    markets: list[Literal["moneyline", "spread", "total"]] = Field(
         default_factory=lambda: ["moneyline", "spread"]
     )
     bankroll: float = Field(default=10000.0, ge=100, le=1_000_000)
