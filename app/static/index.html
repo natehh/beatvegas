@@ -183,7 +183,7 @@
     <h1>beatvegas</h1>
     <p class="lede">
       Sport-open team win/loss modeling. NBA first: Elo ratings, schedule simulation,
-      and backtests against last season.
+      historical odds backtests, and bankroll-aware betting rules.
     </p>
 
     <form class="controls" id="run-form">
@@ -227,6 +227,57 @@
         <tbody id="tbody"></tbody>
       </table>
     </div>
+
+    <h2 style="margin:2.5rem 0 0.5rem;font-family:Fraunces,Georgia,serif;font-weight:600;">Betting backtest</h2>
+    <p class="lede">
+      Tune a minimum probability edge on the prior season, then simulate quarter-Kelly
+      moneyline + spread bets on the holdout season against free historical odds.
+    </p>
+    <form class="controls" id="bet-form">
+      <label>
+        Holdout season
+        <select id="bet-season">
+          <option value="2024-25" selected>2024-25</option>
+          <option value="2023-24">2023-24</option>
+        </select>
+      </label>
+      <label>
+        Tune season
+        <select id="tune-season">
+          <option value="2023-24" selected>2023-24</option>
+          <option value="2022-23">2022-23</option>
+        </select>
+      </label>
+      <label>
+        Min edge (blank = auto)
+        <input id="min-edge" type="number" min="0" max="0.25" step="0.01" placeholder="auto" />
+      </label>
+      <label>
+        Bankroll
+        <input id="bankroll" type="number" min="100" step="100" value="10000" />
+      </label>
+      <button type="submit" id="bet-btn">Run betting backtest</button>
+    </form>
+    <div class="status" id="bet-status">Ready for betting backtest.</div>
+    <div class="metrics" id="bet-metrics" hidden></div>
+    <div class="table-wrap" id="bet-table-wrap" hidden>
+      <table>
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Market</th>
+            <th>Side</th>
+            <th class="num">Edge</th>
+            <th class="num">Stake</th>
+            <th>Odds</th>
+            <th>Result</th>
+            <th class="num">Profit</th>
+            <th class="num">Bankroll</th>
+          </tr>
+        </thead>
+        <tbody id="bet-tbody"></tbody>
+      </table>
+    </div>
   </main>
   <script>
     const statusEl = document.getElementById("status");
@@ -235,10 +286,16 @@
     const tbody = document.getElementById("tbody");
     const runBtn = document.getElementById("run-btn");
     const refreshBtn = document.getElementById("refresh-btn");
+    const betBtn = document.getElementById("bet-btn");
+    const betStatus = document.getElementById("bet-status");
+    const betMetrics = document.getElementById("bet-metrics");
+    const betTableWrap = document.getElementById("bet-table-wrap");
+    const betTbody = document.getElementById("bet-tbody");
 
     function setBusy(busy, msg) {
       runBtn.disabled = busy;
       refreshBtn.disabled = busy;
+      betBtn.disabled = busy;
       statusEl.classList.remove("error");
       statusEl.textContent = msg || (busy ? "Working…" : "Ready.");
     }
@@ -331,6 +388,83 @@
       const start = Number(season.split("-")[0]);
       return `${start - 1}-${String(start).slice(-2)}`;
     }
+
+    function renderBetMetrics(data) {
+      const m = data.metrics || {};
+      const items = [
+        ["Min edge", data.selected_min_edge],
+        ["Bets", m.n_decided],
+        ["Hit rate", m.hit_rate],
+        ["ROI", m.roi],
+        ["Profit", m.profit],
+        ["Final bankroll", m.final_bankroll],
+        ["Max DD", m.max_drawdown],
+        ["Odds match", data.odds_match_rate],
+      ];
+      betMetrics.hidden = false;
+      betMetrics.innerHTML = items.map(([k, v]) => {
+        let display = v;
+        if (k === "ROI" || k === "Hit rate" || k === "Max DD" || k === "Odds match") {
+          display = typeof v === "number" ? `${(v * 100).toFixed(1)}%` : v;
+        } else if (typeof v === "number" && (k === "Profit" || k === "Final bankroll")) {
+          display = v.toLocaleString(undefined, { maximumFractionDigits: 0 });
+        }
+        return `<div class="metric"><div class="k">${k}</div><div class="v">${display ?? "—"}</div></div>`;
+      }).join("");
+    }
+
+    function renderBets(bets) {
+      betTableWrap.hidden = false;
+      betTbody.innerHTML = (bets || []).map(b => {
+        const cls = b.profit > 0 ? "err-pos" : (b.profit < 0 ? "err-neg" : "");
+        const result = b.won === true ? "W" : (b.won === false ? "L" : "P");
+        return `<tr>
+          <td>${b.date}</td>
+          <td>${b.market}</td>
+          <td>${b.side}${b.line != null ? " " + b.line : ""}</td>
+          <td class="num">${(b.edge * 100).toFixed(1)}%</td>
+          <td class="num">${b.stake.toFixed(0)}</td>
+          <td>${b.american_odds > 0 ? "+" : ""}${b.american_odds}</td>
+          <td>${result}</td>
+          <td class="num ${cls}">${b.profit > 0 ? "+" : ""}${b.profit.toFixed(0)}</td>
+          <td class="num">${b.bankroll_after.toFixed(0)}</td>
+        </tr>`;
+      }).join("");
+    }
+
+    document.getElementById("bet-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const edgeRaw = document.getElementById("min-edge").value;
+      const body = {
+        season: document.getElementById("bet-season").value,
+        tune_season: document.getElementById("tune-season").value,
+        min_edge: edgeRaw === "" ? null : Number(edgeRaw),
+        bankroll: Number(document.getElementById("bankroll").value) || 10000,
+        markets: ["moneyline", "spread"],
+      };
+      setBusy(true, "Tuning edge and simulating bets…");
+      betStatus.classList.remove("error");
+      betStatus.textContent = "Running betting backtest…";
+      try {
+        const res = await fetch("/api/nba/betting", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || "Betting backtest failed");
+        renderBetMetrics(data);
+        renderBets(data.bets);
+        setBusy(false, "Record model ready.");
+        betStatus.textContent = `Holdout ${data.config ? body.season : body.season}: edge=${data.selected_min_edge}, profit=${data.metrics.profit}`;
+      } catch (err) {
+        betStatus.classList.add("error");
+        betStatus.textContent = String(err.message || err);
+        runBtn.disabled = false;
+        refreshBtn.disabled = false;
+        betBtn.disabled = false;
+      }
+    });
   </script>
 </body>
 </html>

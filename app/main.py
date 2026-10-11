@@ -11,8 +11,10 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from core.backtest import BacktestRunner
+from core.betting import BettingConfig, BettingEngine, tune_min_edge
 from core.elo import EloConfig
 from sports.nba.adapter import NbaAdapter, prior_season
+from sports.nba.odds import load_odds_for_season, match_rate
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
@@ -21,6 +23,7 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 _adapter = NbaAdapter()
 _runner = BacktestRunner(elo_config=EloConfig())
+_betting = BettingEngine(elo_config=EloConfig())
 
 
 class SimulateRequest(BaseModel):
@@ -33,6 +36,18 @@ class SimulateRequest(BaseModel):
 class RefreshRequest(BaseModel):
     season: Optional[str] = None
     seasons: Optional[list[str]] = None
+
+
+class BettingRequest(BaseModel):
+    season: str = "2024-25"
+    tune_season: str = "2023-24"
+    min_edge: Optional[float] = Field(default=None, ge=0.0, le=0.25)
+    markets: list[Literal["moneyline", "spread"]] = Field(
+        default_factory=lambda: ["moneyline", "spread"]
+    )
+    bankroll: float = Field(default=10000.0, ge=100, le=1_000_000)
+    kelly_fraction: float = Field(default=0.25, ge=0.05, le=1.0)
+    refresh_odds: bool = False
 
 
 @app.get("/")
@@ -64,14 +79,81 @@ def nba_simulate(req: SimulateRequest) -> dict:
     return payload
 
 
+@app.post("/api/nba/betting")
+def nba_betting(req: BettingRequest) -> dict:
+    try:
+        tune_sched = _adapter.fetch_results(req.tune_season, use_cache=True)
+        holdout_sched = _adapter.fetch_results(req.season, use_cache=True)
+        prior_tune = _adapter.fetch_results(prior_season(req.tune_season), use_cache=True)
+        prior_hold = _adapter.fetch_results(prior_season(req.season), use_cache=True)
+        tune_odds = load_odds_for_season(req.tune_season, force_refresh=req.refresh_odds)
+        holdout_odds = load_odds_for_season(req.season, force_refresh=req.refresh_odds)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Failed to load betting data: {exc}") from exc
+
+    markets = tuple(req.markets)
+    base = BettingConfig(
+        min_edge=0.03,
+        markets=markets,  # type: ignore[arg-type]
+        kelly_fraction=req.kelly_fraction,
+        starting_bankroll=req.bankroll,
+    )
+
+    tune_grid: list[dict] = []
+    if req.min_edge is None:
+        best_edge, tune_grid, fitted = tune_min_edge(
+            _betting, prior_tune, tune_sched, tune_odds, base=base
+        )
+        cfg = BettingConfig(
+            min_edge=best_edge,
+            markets=fitted.markets,
+            kelly_fraction=req.kelly_fraction,
+            starting_bankroll=req.bankroll,
+            flat_unit_frac=fitted.flat_unit_frac,
+            calib_a=fitted.calib_a,
+            calib_b=fitted.calib_b,
+            margin_sigma=fitted.margin_sigma,
+            elo_per_point=fitted.elo_per_point,
+        )
+    else:
+        best_edge = req.min_edge
+        a, b, sigma = _betting.fit_calibration(
+            prior_tune, tune_sched, tune_odds, markets=markets  # type: ignore[arg-type]
+        )
+        cfg = BettingConfig(
+            min_edge=best_edge,
+            markets=markets,  # type: ignore[arg-type]
+            kelly_fraction=req.kelly_fraction,
+            starting_bankroll=req.bankroll,
+            flat_unit_frac=0.01,
+            calib_a=a,
+            calib_b=b,
+            margin_sigma=sigma,
+        )
+
+    result = _betting.run(
+        prior_hold, holdout_sched, holdout_odds, config=cfg, calibrate_sigma=False
+    )
+
+    hold_keys = {
+        (g.date, g.home_team_id, g.away_team_id) for g in holdout_sched.completed_games()
+    }
+    payload = result.to_dict()
+    payload["selected_min_edge"] = best_edge
+    payload["tune_season"] = req.tune_season
+    payload["tune_grid"] = tune_grid
+    payload["odds_match_rate"] = round(match_rate(holdout_odds, hold_keys), 4)
+    payload["bets"] = payload["bets"][:100]  # keep response light
+    return payload
+
+
 @app.post("/api/nba/refresh")
 def nba_refresh(req: RefreshRequest) -> dict:
     seasons = req.seasons or []
     if req.season:
         seasons.append(req.season)
     if not seasons:
-        seasons = ["2023-24", "2024-25"]
-    # unique preserve order
+        seasons = ["2022-23", "2023-24", "2024-25"]
     seen = set()
     ordered = []
     for s in seasons:
@@ -85,6 +167,11 @@ def nba_refresh(req: RefreshRequest) -> dict:
             reports.append(_adapter.refresh(season))
         except Exception as exc:
             reports.append({"season": season, "error": str(exc)})
+        try:
+            lines = load_odds_for_season(season, force_refresh=True)
+            reports.append({"season": season, "odds_lines": len(lines)})
+        except Exception as exc:
+            reports.append({"season": season, "odds_error": str(exc)})
     return {"refreshed": reports}
 
 

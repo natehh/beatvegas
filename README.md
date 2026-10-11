@@ -36,6 +36,29 @@ python scripts/backtest_cli.py --season 2024-25 --mode both --n-sims 5000
 python scripts/backtest_cli.py --season 2024-25 --refresh   # re-pull data
 ```
 
+## Betting backtest (moneyline + spread)
+
+Uses free historical odds from [csdurfee/scrape_yahoo_odds](https://github.com/csdurfee/scrape_yahoo_odds) (Yahoo closing-style lines).
+
+Rules:
+- Compare model probability vs de-vigged market probability
+- Bet when edge ≥ tuned `min_edge` (walk-forward: tune on prior season, evaluate holdout)
+- Stake with **quarter-Kelly**, capped at 5% of bankroll
+- Spreads: Elo → expected margin → Normal CDF cover probability
+
+```bash
+python scripts/betting_cli.py --season 2024-25 --tune-season 2023-24
+python scripts/betting_cli.py --season 2024-25 --min-edge 0.03   # skip tuning
+```
+
+Totals are deferred until an expected-points model exists.
+
+API: `POST /api/nba/betting` with `{ season, tune_season, min_edge?, bankroll, markets }`.
+
+### Honest baseline (2024–25 holdout)
+
+A plain Elo + calibrated edge rule **does not currently beat Yahoo closing-style lines** on 2023–24 tune / 2024–25 holdout (negative ROI). That’s expected: closing markets are strong. The betting stack is there to tune rules and measure progress as the model gets better (injuries, priors, totals, etc.).
+
 ## Tests
 
 ```bash
