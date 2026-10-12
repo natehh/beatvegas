@@ -99,6 +99,27 @@ python scripts/betting_cli.py --no-pace          # ablation
 python scripts/betting_cli.py                    # pace on, injuries off
 ```
 
+## Player props — forward collection
+
+Historical prop closes are not free at season scale, so we **record going forward** and settle against box scores.
+
+1. Get a free key at [the-odds-api.com](https://the-odds-api.com/) (~500 credits/month).
+2. Export it and snapshot upcoming NBA props (points / rebounds / assists by default):
+
+```bash
+export THE_ODDS_API_KEY=your_key
+python scripts/collect_prop_odds.py                  # ~3 credits × N games in next 36h
+python scripts/collect_prop_odds.py --max-events 5   # credit-safe smoke
+python scripts/settle_prop_odds.py                   # grade finished games via ESPN
+```
+
+Ledger files (gitignored):
+- `data/props/prop_quotes.jsonl` — each book/market/player/line snapshot
+- `data/props/prop_settled.jsonl` — joined actuals + over/under results
+- `data/props/snapshots/<timestamp>/` — raw API payloads
+
+Suggested cadence: **1× daily pregame** (and optionally again near tip for a crude open→close pair). Extended markets: `--extended` (more credits).
+
 ## Tests
 
 ```bash
@@ -113,7 +134,10 @@ pytest -q
 | `sports/nba/` | NBA adapter + disk cache |
 | `app/` | FastAPI + static HTML |
 | `scripts/backtest_cli.py` | Headless eval for tuning |
+| `scripts/collect_prop_odds.py` | Forward prop-odds snapshots |
+| `scripts/settle_prop_odds.py` | Settle props vs ESPN box scores |
 | `data/cache/` | Cached schedules/results (gitignored) |
+| `data/props/` | Prop quote ledger (gitignored) |
 
 ## Adding another sport
 
