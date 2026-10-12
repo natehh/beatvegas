@@ -8,13 +8,16 @@ from typing import Literal, Optional, Sequence
 
 import numpy as np
 
-from core.elo import EloConfig, EloEngine
-from core.markets import MarginModel, MarketPricer, calibrate_margin_sigma
-from core.models import Game, SeasonSchedule
-from core.odds import EdgeOpportunity, kelly_fraction
+from core.ensemble import EnsembleConfig, EnsembleModel
+from core.injuries import InjuryConfig, InjuryListing, InjuryModel, PlayerMinuteLine, normalize_player_name
+from core.markets import MarketPricer
+from core.models import SeasonSchedule
+from core.odds import EdgeOpportunity, american_to_decimal, fair_probs_from_american, kelly_fraction
+from core.pace import PaceConfig, PaceModel, PaceObservation
+from core.totals import TotalsConfig, TotalsModel
 
 
-MarketName = Literal["moneyline", "spread"]
+MarketName = Literal["moneyline", "spread", "total"]
 
 
 @dataclass
@@ -29,12 +32,23 @@ class OddsLine:
     away_spread: float
     home_spread_odds: float
     away_spread_odds: float
+    total_line: Optional[float] = None
+    over_odds: Optional[float] = None
+    under_odds: Optional[float] = None
     home_score: Optional[int] = None
     away_score: Optional[int] = None
 
     @property
     def is_final(self) -> bool:
         return self.home_score is not None and self.away_score is not None
+
+    @property
+    def has_totals(self) -> bool:
+        return (
+            self.total_line is not None
+            and self.over_odds is not None
+            and self.under_odds is not None
+        )
 
 
 @dataclass
@@ -62,30 +76,43 @@ class BettingConfig:
     kelly_fraction: float = 0.25
     max_bet_frac: float = 0.05
     starting_bankroll: float = 10_000.0
-    one_bet_per_game: bool = True  # take largest edge only
+    one_bet_per_game: bool = True
     elo_per_point: float = 28.0
     margin_sigma: float = 12.0
-    # Flat unit staking (fraction of starting bankroll). If set, overrides Kelly.
     flat_unit_frac: Optional[float] = 0.01
-    # Affine calibration: p' = clip(a * p + b). Identity if None.
     calib_a: float = 1.0
     calib_b: float = 0.0
+    # Ensemble knobs (side markets)
+    market_shrink: float = 0.35
+    elo_blend: float = 0.55
+    srs_blend: float = 0.45
+    slow_k: float = 12.0
+    fast_k: float = 36.0
+    slow_weight: float = 0.55
+    fast_weight: float = 0.45
+    b2b_penalty: float = 2.2
+    use_rest: bool = True
+    only_fade_favorites: bool = False
+    # Totals knobs
+    totals_ema_alpha: float = 0.12
+    totals_sigma: float = 11.0
+    totals_market_shrink: float = 0.25
+    totals_home_boost: float = 1.5
+    totals_b2b_penalty: float = 2.0
+    # Pace / injuries
+    use_pace: bool = True
+    pace_ema_alpha: float = 0.15
+    use_injuries: bool = True
+    injury_mpg_coeff: float = 4.0
+    injury_total_coeff: float = 2.5
+    injury_questionable_weight: float = 0.25
 
 
 def calibrate_probs(model_probs: np.ndarray, outcomes: np.ndarray) -> tuple[float, float]:
-    """
-    Fit a simple logistic (Platt-style) map from model prob -> calibrated prob.
-    Returns (a, b) for p' = sigmoid(a * logit(p) + b), stored as linear approx
-    on probability space via two-point fit for robustness on small samples.
-
-    We fit: logit(p_emp) ~ a * logit(p_model) + b on binned data, then expose
-    an affine map in logit space applied at bet time.
-    """
     p = np.clip(model_probs.astype(float), 1e-4, 1 - 1e-4)
     y = outcomes.astype(float)
     if len(p) < 40 or y.sum() < 5 or (1 - y).sum() < 5:
         return 1.0, 0.0
-    # Bin into deciles and regress logit(emp) on logit(model)
     qs = np.quantile(p, np.linspace(0, 1, 11))
     xs, ys = [], []
     for lo, hi in zip(qs[:-1], qs[1:]):
@@ -99,7 +126,6 @@ def calibrate_probs(model_probs: np.ndarray, outcomes: np.ndarray) -> tuple[floa
     if len(xs) < 3:
         return 1.0, 0.0
     a, b = np.polyfit(xs, ys, 1)
-    # Keep mild shrink toward identity to avoid wild fits
     a = float(np.clip(a, 0.2, 2.5))
     b = float(np.clip(b, -2.0, 2.0))
     return a, b
@@ -133,6 +159,17 @@ class BettingResult:
                 "flat_unit_frac": self.config.flat_unit_frac,
                 "calib_a": self.config.calib_a,
                 "calib_b": self.config.calib_b,
+                "market_shrink": self.config.market_shrink,
+                "elo_blend": self.config.elo_blend,
+                "srs_blend": self.config.srs_blend,
+                "slow_k": self.config.slow_k,
+                "fast_k": self.config.fast_k,
+                "b2b_penalty": self.config.b2b_penalty,
+                "use_rest": self.config.use_rest,
+                "use_pace": self.config.use_pace,
+                "use_injuries": self.config.use_injuries,
+                "injury_mpg_coeff": self.config.injury_mpg_coeff,
+                "pace_ema_alpha": self.config.pace_ema_alpha,
             },
             "metrics": self.metrics,
             "final_bankroll": self.final_bankroll,
@@ -165,21 +202,24 @@ def _settle_moneyline(side: str, home_score: int, away_score: int) -> Optional[b
     return home_won if side == "home" else (not home_won)
 
 
-def _settle_spread(
-    side: str,
-    line: float,
-    home_score: int,
-    away_score: int,
-) -> Optional[bool]:
+def _settle_spread(side: str, line: float, home_score: int, away_score: int) -> Optional[bool]:
     margin = home_score - away_score
     if side == "home":
         adj = margin + line
     else:
-        # away line is typically +X when home is -X
         adj = (-margin) + line
     if abs(adj) < 1e-9:
-        return None  # push
+        return None
     return adj > 0
+
+
+def _settle_total(side: str, line: float, home_score: int, away_score: int) -> Optional[bool]:
+    total = home_score + away_score
+    diff = total - line
+    if abs(diff) < 1e-9:
+        return None  # push
+    went_over = diff > 0
+    return went_over if side == "over" else (not went_over)
 
 
 def _metrics(bets: list[Bet], starting: float, ending: float) -> dict[str, float]:
@@ -196,6 +236,10 @@ def _metrics(bets: list[Bet], starting: float, ending: float) -> dict[str, float
             "max_drawdown": 0.0,
             "avg_edge": 0.0,
             "avg_stake": 0.0,
+            "by_moneyline_n": 0.0,
+            "by_spread_n": 0.0,
+            "log_loss": 0.0,
+            "brier": 0.0,
         }
     stakes = np.array([b.stake for b in decided], dtype=float)
     profits = np.array([b.profit for b in decided], dtype=float)
@@ -203,6 +247,10 @@ def _metrics(bets: list[Bet], starting: float, ending: float) -> dict[str, float
     bankrolls = np.array([b.bankroll_after for b in bets], dtype=float)
     peak = np.maximum.accumulate(np.concatenate([[starting], bankrolls]))
     dd = (peak[1:] - bankrolls) / np.clip(peak[1:], 1e-9, None)
+    # Probability quality on bet sides
+    p = np.clip(np.array([b.model_prob for b in decided]), 1e-6, 1 - 1e-6)
+    brier = float(np.mean((p - wins) ** 2))
+    log_loss = float(-np.mean(wins * np.log(p) + (1 - wins) * np.log(1 - p)))
     return {
         "n_bets": float(len(bets)),
         "n_decided": float(n),
@@ -215,12 +263,137 @@ def _metrics(bets: list[Bet], starting: float, ending: float) -> dict[str, float
         "avg_stake": round(float(np.mean(stakes)), 2),
         "by_moneyline_n": float(sum(1 for b in decided if b.market == "moneyline")),
         "by_spread_n": float(sum(1 for b in decided if b.market == "spread")),
+        "by_total_n": float(sum(1 for b in decided if b.market == "total")),
+        "brier": round(brier, 4),
+        "log_loss": round(log_loss, 4),
     }
+
+
+def _ensemble_from_config(cfg: BettingConfig) -> EnsembleModel:
+    return EnsembleModel(
+        EnsembleConfig(
+            slow_k=cfg.slow_k,
+            fast_k=cfg.fast_k,
+            slow_weight=cfg.slow_weight,
+            fast_weight=cfg.fast_weight,
+            elo_blend=cfg.elo_blend,
+            srs_blend=cfg.srs_blend,
+            elo_per_point=cfg.elo_per_point,
+            margin_sigma=cfg.margin_sigma,
+            b2b_penalty=cfg.b2b_penalty if cfg.use_rest else 0.0,
+            rest3_bonus=0.5 if cfg.use_rest else 0.0,
+            market_shrink=cfg.market_shrink,
+        )
+    )
+
+
+def _copy_cfg(cfg: BettingConfig, **overrides) -> BettingConfig:
+    data = {
+        "min_edge": cfg.min_edge,
+        "markets": cfg.markets,
+        "kelly_fraction": cfg.kelly_fraction,
+        "max_bet_frac": cfg.max_bet_frac,
+        "starting_bankroll": cfg.starting_bankroll,
+        "one_bet_per_game": cfg.one_bet_per_game,
+        "elo_per_point": cfg.elo_per_point,
+        "margin_sigma": cfg.margin_sigma,
+        "flat_unit_frac": cfg.flat_unit_frac,
+        "calib_a": cfg.calib_a,
+        "calib_b": cfg.calib_b,
+        "market_shrink": cfg.market_shrink,
+        "elo_blend": cfg.elo_blend,
+        "srs_blend": cfg.srs_blend,
+        "slow_k": cfg.slow_k,
+        "fast_k": cfg.fast_k,
+        "slow_weight": cfg.slow_weight,
+        "fast_weight": cfg.fast_weight,
+        "b2b_penalty": cfg.b2b_penalty,
+        "use_rest": cfg.use_rest,
+        "only_fade_favorites": cfg.only_fade_favorites,
+        "totals_ema_alpha": cfg.totals_ema_alpha,
+        "totals_sigma": cfg.totals_sigma,
+        "totals_market_shrink": cfg.totals_market_shrink,
+        "totals_home_boost": cfg.totals_home_boost,
+        "totals_b2b_penalty": cfg.totals_b2b_penalty,
+        "use_pace": cfg.use_pace,
+        "pace_ema_alpha": cfg.pace_ema_alpha,
+        "use_injuries": cfg.use_injuries,
+        "injury_mpg_coeff": cfg.injury_mpg_coeff,
+        "injury_total_coeff": cfg.injury_total_coeff,
+        "injury_questionable_weight": cfg.injury_questionable_weight,
+    }
+    data.update(overrides)
+    return BettingConfig(**data)
+
+
+def _seed_injury_minutes(model: InjuryModel, prior_mpg: Optional[dict[str, dict]]) -> None:
+    if not prior_mpg:
+        return
+    for row in prior_mpg.values():
+        player = str(row.get("player", "")).strip()
+        if not player:
+            continue
+        try:
+            mpg = float(row.get("mpg", 0.0))
+        except (TypeError, ValueError):
+            continue
+        key = normalize_player_name(player)
+        if key:
+            model.minutes.mpg[key] = mpg
+            team_id = str(row.get("team_id", "") or "")
+            if team_id:
+                model.minutes.team_of[key] = team_id
+
+
+def _totals_opportunities(
+    totals: TotalsModel,
+    home_id: str,
+    away_id: str,
+    line: float,
+    over_odds: float,
+    under_odds: float,
+    *,
+    rest=None,
+    pace_scale: float = 1.0,
+    total_adj: float = 0.0,
+) -> list[EdgeOpportunity]:
+    raw_over = totals.over_prob(
+        home_id,
+        away_id,
+        line,
+        rest=rest,
+        pace_scale=pace_scale,
+        total_adj=total_adj,
+    )
+    fair_over, fair_under = fair_probs_from_american(over_odds, under_odds)
+    model_over = totals.shrink_to_market(raw_over, fair_over)
+    model_under = 1.0 - model_over
+    return [
+        EdgeOpportunity(
+            market="total",
+            side="over",
+            model_prob=model_over,
+            market_prob=fair_over,
+            edge=model_over - fair_over,
+            american_odds=float(over_odds),
+            decimal_odds=american_to_decimal(over_odds),
+            line=float(line),
+        ),
+        EdgeOpportunity(
+            market="total",
+            side="under",
+            model_prob=model_under,
+            market_prob=fair_under,
+            edge=model_under - fair_under,
+            american_odds=float(under_odds),
+            decimal_odds=american_to_decimal(under_odds),
+            line=float(line),
+        ),
+    ]
 
 
 @dataclass
 class BettingEngine:
-    elo_config: EloConfig = field(default_factory=EloConfig)
     config: BettingConfig = field(default_factory=BettingConfig)
 
     def run(
@@ -231,67 +404,121 @@ class BettingEngine:
         *,
         config: Optional[BettingConfig] = None,
         calibrate_sigma: bool = True,
+        pace_observations: Optional[Sequence[PaceObservation]] = None,
+        prior_pace_observations: Optional[Sequence[PaceObservation]] = None,
+        injuries_by_date: Optional[dict[str, list[InjuryListing]]] = None,
+        prior_player_mpg: Optional[dict[str, dict]] = None,
+        minute_lines: Optional[Sequence[PlayerMinuteLine]] = None,
     ) -> BettingResult:
         cfg = config or self.config
-        engine = EloEngine(config=self.elo_config)
-        if prior_schedule is not None:
-            engine.fit(prior_schedule.completed_games(), [t.id for t in prior_schedule.teams])
-        for t in season_schedule.teams:
-            engine.ensure_team(t.id)
-        if prior_schedule is not None:
-            engine.regress_toward_mean([t.id for t in season_schedule.teams])
+        need_side = any(m in cfg.markets for m in ("moneyline", "spread"))
+        need_total = "total" in cfg.markets
+        use_pace = bool(cfg.use_pace and (pace_observations or prior_pace_observations))
+        use_injuries = bool(cfg.use_injuries and injuries_by_date is not None)
 
-        games_chrono = season_schedule.completed_games()
-
-        sigma = cfg.margin_sigma
-        if calibrate_sigma and prior_schedule is not None:
-            diffs, margins = [], []
-            tmp = EloEngine(config=self.elo_config)
-            tmp.fit([], [t.id for t in prior_schedule.teams])
-            # rebuild diffs chronologically on prior season
-            pe = EloEngine(config=self.elo_config)
-            for g in prior_schedule.completed_games():
-                if not g.is_final:
-                    continue
-                hca = 0.0 if g.is_neutral else pe.config.home_advantage
-                d = pe.get_rating(g.home_team_id) + hca - pe.get_rating(g.away_team_id)
-                diffs.append(d)
-                margins.append(float(g.home_score) - float(g.away_score))  # type: ignore[arg-type]
-                pe.update(g)
-            if len(diffs) >= 50:
-                sigma = calibrate_margin_sigma(np.array(diffs), np.array(margins), elo_per_point=cfg.elo_per_point)
-
-        pricer = MarketPricer(
-            engine=engine,
-            margin=MarginModel(elo_per_point=cfg.elo_per_point, margin_sigma=sigma),
+        model = _ensemble_from_config(cfg) if need_side else None
+        totals = TotalsModel(
+            TotalsConfig(
+                ema_alpha=cfg.totals_ema_alpha,
+                total_sigma=cfg.totals_sigma,
+                market_shrink=cfg.totals_market_shrink,
+                home_total_boost=cfg.totals_home_boost,
+                b2b_total_penalty=cfg.totals_b2b_penalty if cfg.use_rest else 0.0,
+                rest3_total_boost=0.5 if cfg.use_rest else 0.0,
+            )
         )
-        cfg = BettingConfig(
-            min_edge=cfg.min_edge,
-            markets=cfg.markets,
-            kelly_fraction=cfg.kelly_fraction,
-            max_bet_frac=cfg.max_bet_frac,
-            starting_bankroll=cfg.starting_bankroll,
-            one_bet_per_game=cfg.one_bet_per_game,
-            elo_per_point=cfg.elo_per_point,
-            margin_sigma=sigma,
-            flat_unit_frac=cfg.flat_unit_frac,
-            calib_a=cfg.calib_a,
-            calib_b=cfg.calib_b,
+        pace_model = PaceModel(PaceConfig(ema_alpha=cfg.pace_ema_alpha)) if use_pace else None
+        injury_model = (
+            InjuryModel(
+                InjuryConfig(
+                    mpg_coeff=cfg.injury_mpg_coeff,
+                    total_coeff=cfg.injury_total_coeff,
+                    questionable_weight=cfg.injury_questionable_weight,
+                )
+            )
+            if use_injuries
+            else None
         )
+        if injury_model is not None:
+            _seed_injury_minutes(injury_model, prior_player_mpg)
 
+        pace_by_game = {
+            (p.date, p.home_team_id, p.away_team_id): p
+            for p in (pace_observations or [])
+        }
+        # Also index by sorted teams for lookup when home/away encoding differed at fetch
+        pace_by_sorted = {
+            (p.date, *sorted([p.home_team_id, p.away_team_id])): p
+            for p in (pace_observations or [])
+        }
+        minutes_by_game: dict[tuple, list[PlayerMinuteLine]] = {}
+        for ln in minute_lines or []:
+            minutes_by_game.setdefault((ln.date, ln.team_id), []).append(ln)
+
+        if prior_schedule is not None:
+            team_ids = [t.id for t in prior_schedule.teams]
+            if model is not None:
+                model.fit(prior_schedule.completed_games(), team_ids)
+                model.ensure_teams([t.id for t in season_schedule.teams])
+                model.regress_toward_mean([t.id for t in season_schedule.teams])
+                if calibrate_sigma:
+                    sigma = model.calibrate_sigma_from_prior(prior_schedule.completed_games())
+                    cfg = _copy_cfg(cfg, margin_sigma=sigma)
+                    model.config.margin_sigma = sigma
+            if need_total:
+                totals.fit(prior_schedule.completed_games(), team_ids)
+                for t in season_schedule.teams:
+                    totals.ensure_team(t.id)
+                totals.regress_toward_mean([t.id for t in season_schedule.teams])
+                if calibrate_sigma:
+                    tsigma = totals.calibrate_sigma(prior_schedule.completed_games())
+                    cfg = _copy_cfg(cfg, totals_sigma=tsigma)
+            if pace_model is not None and prior_pace_observations:
+                pace_model.fit(prior_pace_observations, team_ids)
+                for t in season_schedule.teams:
+                    pace_model.ensure_team(t.id)
+                pace_model.regress_toward_mean([t.id for t in season_schedule.teams])
+        else:
+            if model is not None:
+                model.ensure_teams([t.id for t in season_schedule.teams])
+            if need_total:
+                for t in season_schedule.teams:
+                    totals.ensure_team(t.id)
+            if pace_model is not None:
+                for t in season_schedule.teams:
+                    pace_model.ensure_team(t.id)
+
+        from core.rest import RestTracker
+
+        rest_tracker = RestTracker()
+        if model is not None:
+            model.rest = rest_tracker
+
+        pricer = MarketPricer(model=model) if model is not None else None
         bankroll = cfg.starting_bankroll
         unit = (cfg.flat_unit_frac or 0.0) * cfg.starting_bankroll
         bets: list[Bet] = []
-        odds_sorted = sorted(odds_lines, key=lambda o: (o.date, o.game_key))
         odds_by_teams_date = {
-            (o.date, o.home_team_id, o.away_team_id): o for o in odds_sorted
+            (o.date, o.home_team_id, o.away_team_id): o for o in odds_lines
         }
 
-        for g in games_chrono:
+        for g in season_schedule.completed_games():
+            rest = rest_tracker.context(g) if cfg.use_rest else None
+            pace_scale = 1.0
+            if pace_model is not None:
+                pace_scale = pace_model.pace_scale(g.home_team_id, g.away_team_id)
+            margin_adj = 0.0
+            total_adj = 0.0
+            if injury_model is not None and injuries_by_date is not None:
+                listings = injuries_by_date.get(g.date.isoformat(), [])
+                impact = injury_model.impact(g.home_team_id, g.away_team_id, listings)
+                margin_adj = impact.margin_adj
+                total_adj = impact.total_adj
+
             o = odds_by_teams_date.get((g.date, g.home_team_id, g.away_team_id))
             opps: list[EdgeOpportunity] = []
             if o is not None:
-                if "moneyline" in cfg.markets:
+                if pricer is not None and "moneyline" in cfg.markets:
                     opps.extend(
                         pricer.moneyline_opportunities(
                             g.home_team_id,
@@ -299,9 +526,12 @@ class BettingEngine:
                             o.home_ml,
                             o.away_ml,
                             is_neutral=g.is_neutral,
+                            rest=rest,
+                            margin_adj=margin_adj,
+                            pace_scale=pace_scale if cfg.use_pace else 1.0,
                         )
                     )
-                if "spread" in cfg.markets:
+                if pricer is not None and "spread" in cfg.markets:
                     opps.extend(
                         pricer.spread_opportunities(
                             g.home_team_id,
@@ -311,13 +541,30 @@ class BettingEngine:
                             o.home_spread_odds,
                             o.away_spread_odds,
                             is_neutral=g.is_neutral,
+                            rest=rest,
+                            margin_adj=margin_adj,
+                            pace_scale=pace_scale if cfg.use_pace else 1.0,
+                        )
+                    )
+                if need_total and o.has_totals:
+                    opps.extend(
+                        _totals_opportunities(
+                            totals,
+                            g.home_team_id,
+                            g.away_team_id,
+                            float(o.total_line),  # type: ignore[arg-type]
+                            float(o.over_odds),  # type: ignore[arg-type]
+                            float(o.under_odds),  # type: ignore[arg-type]
+                            rest=rest,
+                            pace_scale=pace_scale if cfg.use_pace else 1.0,
+                            total_adj=total_adj if cfg.use_injuries else 0.0,
                         )
                     )
 
-            # Apply probability calibration, then recompute edge vs market.
             calibrated: list[EdgeOpportunity] = []
             for opp in opps:
                 p = apply_calibration(opp.model_prob, cfg.calib_a, cfg.calib_b)
+                p = (1.0 - 0.15) * p + 0.15 * opp.market_prob
                 calibrated.append(
                     EdgeOpportunity(
                         market=opp.market,
@@ -332,6 +579,13 @@ class BettingEngine:
                 )
 
             candidates = [x for x in calibrated if x.edge >= cfg.min_edge]
+            if cfg.only_fade_favorites:
+                candidates = [
+                    x
+                    for x in candidates
+                    if x.market != "total"
+                    and (x.american_odds > 0 or (x.line is not None and x.line > 0))
+                ]
             if cfg.one_bet_per_game and candidates:
                 candidates = [max(candidates, key=lambda x: x.edge)]
 
@@ -344,10 +598,10 @@ class BettingEngine:
                 if cfg.flat_unit_frac is not None:
                     stake = round(min(unit, bankroll * cfg.max_bet_frac), 2)
                 else:
-                    stake_frac = kelly_fraction(
-                        opp.model_prob, opp.decimal_odds, fraction=cfg.kelly_fraction
+                    stake_frac = min(
+                        kelly_fraction(opp.model_prob, opp.decimal_odds, fraction=cfg.kelly_fraction),
+                        cfg.max_bet_frac,
                     )
-                    stake_frac = min(stake_frac, cfg.max_bet_frac)
                     stake = round(bankroll * stake_frac, 2)
                 if stake < 1:
                     continue
@@ -356,18 +610,21 @@ class BettingEngine:
                 if home_score is not None and away_score is not None:
                     if opp.market == "moneyline":
                         won = _settle_moneyline(opp.side, int(home_score), int(away_score))
-                    else:
+                    elif opp.market == "spread":
                         assert opp.line is not None
                         won = _settle_spread(opp.side, float(opp.line), int(home_score), int(away_score))
+                    else:
+                        assert opp.line is not None
+                        won = _settle_total(opp.side, float(opp.line), int(home_score), int(away_score))
 
                 if won is True:
                     profit = stake * (opp.decimal_odds - 1.0)
                 elif won is False:
                     profit = -stake
                 else:
-                    profit = 0.0  # push / unknown
+                    profit = 0.0
 
-                bankroll = bankroll + profit
+                bankroll += profit
                 bets.append(
                     Bet(
                         date=g.date,
@@ -388,7 +645,31 @@ class BettingEngine:
                 )
 
             if g.is_final:
-                engine.update(g)
+                rest_tracker.observe(g)
+                if model is not None:
+                    model.update(g)
+                if need_total:
+                    totals.update(g)
+                if pace_model is not None:
+                    obs = pace_by_game.get((g.date, g.home_team_id, g.away_team_id))
+                    if obs is None:
+                        obs = pace_by_sorted.get(
+                            (g.date, *sorted([g.home_team_id, g.away_team_id]))
+                        )
+                    if obs is not None:
+                        # Ensure home/away match the game for bookkeeping
+                        pace_model.update(
+                            PaceObservation(
+                                date=g.date,
+                                home_team_id=g.home_team_id,
+                                away_team_id=g.away_team_id,
+                                pace=obs.pace,
+                            )
+                        )
+                if injury_model is not None:
+                    for tid in (g.home_team_id, g.away_team_id):
+                        for ln in minutes_by_game.get((g.date, tid), []):
+                            injury_model.minutes.update_line(ln)
 
         return BettingResult(
             config=cfg,
@@ -404,31 +685,50 @@ class BettingEngine:
         tune_odds: Sequence[OddsLine],
         *,
         markets: tuple[MarketName, ...] = ("moneyline", "spread"),
+        base: Optional[BettingConfig] = None,
+        pace_observations: Optional[Sequence[PaceObservation]] = None,
+        prior_pace_observations: Optional[Sequence[PaceObservation]] = None,
+        injuries_by_date: Optional[dict[str, list[InjuryListing]]] = None,
+        prior_player_mpg: Optional[dict[str, dict]] = None,
+        minute_lines: Optional[Sequence[PlayerMinuteLine]] = None,
     ) -> tuple[float, float, float]:
-        """Return (calib_a, calib_b, margin_sigma) fit on the tune season."""
-        # Run with zero edge / tiny flat stakes just to harvest probs via a shadow walk.
-        shadow_cfg = BettingConfig(
-            min_edge=-1.0,  # keep all sides; we'll filter below
+        base = base or self.config
+        shadow_cfg = _copy_cfg(
+            base,
+            min_edge=-1.0,
             markets=markets,
             starting_bankroll=10_000.0,
             flat_unit_frac=0.001,
             one_bet_per_game=False,
+            calib_a=1.0,
+            calib_b=0.0,
         )
-        # Use identity calibration for the harvest pass.
-        result = self.run(prior_schedule, tune_schedule, tune_odds, config=shadow_cfg)
-        # Identity calib harvest: use home-side settled bets only (avoid double-counting).
+        result = self.run(
+            prior_schedule,
+            tune_schedule,
+            tune_odds,
+            config=shadow_cfg,
+            pace_observations=pace_observations,
+            prior_pace_observations=prior_pace_observations,
+            injuries_by_date=injuries_by_date,
+            prior_player_mpg=prior_player_mpg,
+            minute_lines=minute_lines,
+        )
+        # Prefer one side per market to avoid double-counting complementary prices.
+        preferred_sides = {"moneyline": "home", "spread": "home", "total": "over"}
         sample = [
-            b
-            for b in result.bets
-            if b.won is not None and b.side == "home" and b.market in markets
+            bet
+            for bet in result.bets
+            if bet.won is not None
+            and bet.market in markets
+            and bet.side == preferred_sides.get(bet.market, bet.side)
         ]
         if len(sample) < 40:
-            sample = [b for b in result.bets if b.won is not None and b.side == "home"]
-        probs = np.array([b.model_prob for b in sample], dtype=float)
-        outs = np.array([1.0 if b.won else 0.0 for b in sample], dtype=float)
+            sample = [bet for bet in result.bets if bet.won is not None]
+        probs = np.array([bet.model_prob for bet in sample], dtype=float)
+        outs = np.array([1.0 if bet.won else 0.0 for bet in sample], dtype=float)
         a, b = calibrate_probs(probs, outs)
-        sigma = result.config.margin_sigma
-        return a, b, sigma
+        return a, b, result.config.margin_sigma
 
 
 def tune_min_edge(
@@ -439,23 +739,30 @@ def tune_min_edge(
     *,
     edges: Sequence[float] = (0.01, 0.02, 0.03, 0.04, 0.05, 0.07, 0.10),
     base: Optional[BettingConfig] = None,
+    pace_observations: Optional[Sequence[PaceObservation]] = None,
+    prior_pace_observations: Optional[Sequence[PaceObservation]] = None,
+    injuries_by_date: Optional[dict[str, list[InjuryListing]]] = None,
+    prior_player_mpg: Optional[dict[str, dict]] = None,
+    minute_lines: Optional[Sequence[PlayerMinuteLine]] = None,
 ) -> tuple[float, list[dict], BettingConfig]:
-    """
-    Fit calibration on the tune window, then pick min_edge maximizing flat-unit ROI.
-    Returns (best_edge, grid_rows, fitted_base_config).
-    """
     base = base or BettingConfig()
-    a, b, sigma = engine.fit_calibration(
-        prior_schedule, tune_schedule, tune_odds, markets=base.markets
+    feature_kwargs = dict(
+        pace_observations=pace_observations,
+        prior_pace_observations=prior_pace_observations,
+        injuries_by_date=injuries_by_date,
+        prior_player_mpg=prior_player_mpg,
+        minute_lines=minute_lines,
     )
-    fitted = BettingConfig(
-        min_edge=base.min_edge,
+    a, b, sigma = engine.fit_calibration(
+        prior_schedule,
+        tune_schedule,
+        tune_odds,
         markets=base.markets,
-        kelly_fraction=base.kelly_fraction,
-        max_bet_frac=base.max_bet_frac,
-        starting_bankroll=base.starting_bankroll,
-        one_bet_per_game=base.one_bet_per_game,
-        elo_per_point=base.elo_per_point,
+        base=base,
+        **feature_kwargs,
+    )
+    fitted = _copy_cfg(
+        base,
         margin_sigma=sigma,
         flat_unit_frac=base.flat_unit_frac if base.flat_unit_frac is not None else 0.01,
         calib_a=a,
@@ -466,35 +773,20 @@ def tune_min_edge(
     best_edge = fitted.min_edge
     best_score = -1e18
     for e in edges:
-        cfg = BettingConfig(
-            min_edge=float(e),
-            markets=fitted.markets,
-            kelly_fraction=fitted.kelly_fraction,
-            max_bet_frac=fitted.max_bet_frac,
-            starting_bankroll=fitted.starting_bankroll,
-            one_bet_per_game=fitted.one_bet_per_game,
-            elo_per_point=fitted.elo_per_point,
-            margin_sigma=fitted.margin_sigma,
-            flat_unit_frac=fitted.flat_unit_frac,
-            calib_a=fitted.calib_a,
-            calib_b=fitted.calib_b,
-        )
+        cfg = _copy_cfg(fitted, min_edge=float(e))
         result = engine.run(
-            prior_schedule, tune_schedule, tune_odds, config=cfg, calibrate_sigma=False
+            prior_schedule,
+            tune_schedule,
+            tune_odds,
+            config=cfg,
+            calibrate_sigma=False,
+            **feature_kwargs,
         )
         m = result.metrics
         n = m.get("n_decided", 0)
         roi = m.get("roi", 0.0)
         score = roi * np.log1p(n) if n >= 30 else -1e9 + n
-        rows.append(
-            {
-                "min_edge": e,
-                **m,
-                "score": round(float(score), 4),
-                "calib_a": a,
-                "calib_b": b,
-            }
-        )
+        rows.append({"min_edge": e, **m, "score": round(float(score), 4), "calib_a": a, "calib_b": b})
         if score > best_score:
             best_score = score
             best_edge = float(e)

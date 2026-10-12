@@ -70,7 +70,8 @@ SEASON_DATE_RANGE = {
 
 
 def _cache_path(cache_dir: Path, season: str) -> Path:
-    return cache_dir / f"nba_{season.replace('/', '-')}_odds.json"
+    # v2 includes totals (over/under) fields
+    return cache_dir / f"nba_{season.replace('/', '-')}_odds_v2.json"
 
 
 def yahoo_name_to_abbr(name: str) -> str:
@@ -153,6 +154,9 @@ def load_odds_for_season(
         away_spread = _to_float(row.get("spread_away_points"))
         home_sp_odds = _to_float(row.get("spread_home_odds"))
         away_sp_odds = _to_float(row.get("spread_away_odds"))
+        total_line = _to_float(row.get("total_over_points"))
+        over_odds = _to_float(row.get("total_over_odds"))
+        under_odds = _to_float(row.get("total_under_odds"))
         if None in (home_ml, away_ml, home_spread, away_spread, home_sp_odds, away_sp_odds):
             continue
 
@@ -169,6 +173,9 @@ def load_odds_for_season(
                 away_spread=float(away_spread),
                 home_spread_odds=float(home_sp_odds),
                 away_spread_odds=float(away_sp_odds),
+                total_line=total_line,
+                over_odds=over_odds,
+                under_odds=under_odds,
             )
         )
 
@@ -205,6 +212,9 @@ def _line_to_dict(line: OddsLine) -> dict:
         "away_spread": line.away_spread,
         "home_spread_odds": line.home_spread_odds,
         "away_spread_odds": line.away_spread_odds,
+        "total_line": line.total_line,
+        "over_odds": line.over_odds,
+        "under_odds": line.under_odds,
         "home_score": line.home_score,
         "away_score": line.away_score,
     }
@@ -222,6 +232,9 @@ def _line_from_dict(d: dict) -> OddsLine:
         away_spread=float(d["away_spread"]),
         home_spread_odds=float(d["home_spread_odds"]),
         away_spread_odds=float(d["away_spread_odds"]),
+        total_line=d.get("total_line"),
+        over_odds=d.get("over_odds"),
+        under_odds=d.get("under_odds"),
         home_score=d.get("home_score"),
         away_score=d.get("away_score"),
     )

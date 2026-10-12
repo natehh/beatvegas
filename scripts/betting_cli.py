@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Walk-forward betting backtest CLI (moneyline + spread)."""
+"""Walk-forward betting backtest CLI (moneyline + spread + optional totals)."""
 
 from __future__ import annotations
 
@@ -13,8 +13,9 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from core.betting import BettingConfig, BettingEngine, tune_min_edge
-from core.elo import EloConfig
+from core.defaults import DEFAULT_BETTING_CONFIG
 from sports.nba.adapter import NbaAdapter, prior_season
+from sports.nba.features import features_to_engine_kwargs, load_season_features
 from sports.nba.odds import load_odds_for_season, match_rate
 
 
@@ -23,29 +24,54 @@ def main() -> int:
     p.add_argument("--season", default="2024-25", help="Holdout / evaluation season")
     p.add_argument("--tune-season", default="2023-24", help="Season used to tune min_edge")
     p.add_argument("--min-edge", type=float, default=None, help="Override tuned edge")
-    p.add_argument("--markets", default="moneyline,spread")
-    p.add_argument("--bankroll", type=float, default=10000.0)
-    p.add_argument("--kelly", type=float, default=0.25)
+    p.add_argument("--markets", default=",".join(DEFAULT_BETTING_CONFIG.markets))
+    p.add_argument("--bankroll", type=float, default=DEFAULT_BETTING_CONFIG.starting_bankroll)
+    p.add_argument("--kelly", type=float, default=DEFAULT_BETTING_CONFIG.kelly_fraction)
+    p.add_argument("--market-shrink", type=float, default=DEFAULT_BETTING_CONFIG.market_shrink)
+    p.add_argument("--elo-blend", type=float, default=DEFAULT_BETTING_CONFIG.elo_blend)
+    p.add_argument("--no-rest", action="store_true", help="Disable rest/B2B adjustments")
+    p.add_argument("--no-pace", action="store_true", help="Disable pace scaling")
+    p.add_argument("--no-injuries", action="store_true", help="Disable injury adjustments")
     p.add_argument("--refresh-odds", action="store_true")
     p.add_argument("--json", action="store_true")
     args = p.parse_args()
 
     markets = tuple(m.strip() for m in args.markets.split(",") if m.strip())  # type: ignore
     adapter = NbaAdapter()
-    engine = BettingEngine(elo_config=EloConfig())
+    engine = BettingEngine()
 
     tune_season = args.tune_season
     holdout = args.season
 
-    print(f"Loading schedules…", file=sys.stderr)
+    print("Loading schedules…", file=sys.stderr)
     tune_sched = adapter.fetch_results(tune_season)
     holdout_sched = adapter.fetch_results(holdout)
     prior_for_tune = adapter.fetch_results(prior_season(tune_season))
     prior_for_holdout = adapter.fetch_results(prior_season(holdout))
 
-    print(f"Loading odds…", file=sys.stderr)
+    print("Loading odds…", file=sys.stderr)
     tune_odds = load_odds_for_season(tune_season, force_refresh=args.refresh_odds)
     holdout_odds = load_odds_for_season(holdout, force_refresh=args.refresh_odds)
+
+    use_pace = not args.no_pace
+    use_injuries = not args.no_injuries
+    print("Loading pace / injury features…", file=sys.stderr)
+    tune_feat = load_season_features(
+        tune_season,
+        tune_sched,
+        prior_schedule=prior_for_tune,
+        load_pace=use_pace,
+        load_injuries=use_injuries,
+    )
+    hold_feat = load_season_features(
+        holdout,
+        holdout_sched,
+        prior_schedule=prior_for_holdout,
+        load_pace=use_pace,
+        load_injuries=use_injuries,
+    )
+    tune_kw = features_to_engine_kwargs(tune_feat)
+    hold_kw = features_to_engine_kwargs(hold_feat)
 
     tune_keys = {(g.date, g.home_team_id, g.away_team_id) for g in tune_sched.completed_games()}
     hold_keys = {(g.date, g.home_team_id, g.away_team_id) for g in holdout_sched.completed_games()}
@@ -56,15 +82,29 @@ def main() -> int:
     )
 
     base = BettingConfig(
-        min_edge=0.03,
+        min_edge=DEFAULT_BETTING_CONFIG.min_edge,
         markets=markets,  # type: ignore[arg-type]
         kelly_fraction=args.kelly,
         starting_bankroll=args.bankroll,
+        market_shrink=args.market_shrink,
+        elo_blend=args.elo_blend,
+        srs_blend=1.0 - args.elo_blend,
+        use_rest=False if args.no_rest else DEFAULT_BETTING_CONFIG.use_rest,
+        fast_k=DEFAULT_BETTING_CONFIG.fast_k,
+        slow_k=DEFAULT_BETTING_CONFIG.slow_k,
+        b2b_penalty=DEFAULT_BETTING_CONFIG.b2b_penalty,
+        flat_unit_frac=DEFAULT_BETTING_CONFIG.flat_unit_frac,
+        use_pace=use_pace,
+        use_injuries=use_injuries,
+        pace_ema_alpha=DEFAULT_BETTING_CONFIG.pace_ema_alpha,
+        injury_mpg_coeff=DEFAULT_BETTING_CONFIG.injury_mpg_coeff,
+        injury_total_coeff=DEFAULT_BETTING_CONFIG.injury_total_coeff,
+        injury_questionable_weight=DEFAULT_BETTING_CONFIG.injury_questionable_weight,
     )
 
     if args.min_edge is None:
         best_edge, grid, fitted = tune_min_edge(
-            engine, prior_for_tune, tune_sched, tune_odds, base=base
+            engine, prior_for_tune, tune_sched, tune_odds, base=base, **tune_kw
         )
         print("\n=== Edge grid on tune season", tune_season, "===")
         print(f"calibration a={fitted.calib_a:.3f} b={fitted.calib_b:.3f} sigma={fitted.margin_sigma:.2f}")
@@ -75,22 +115,19 @@ def main() -> int:
                 f"hit={row.get('hit_rate',0):.1%}  score={row.get('score')}"
             )
         print(f"Selected min_edge={best_edge:.2f}")
-        cfg = BettingConfig(
-            min_edge=best_edge,
-            markets=fitted.markets,
-            kelly_fraction=fitted.kelly_fraction,
-            starting_bankroll=args.bankroll,
-            flat_unit_frac=fitted.flat_unit_frac,
-            calib_a=fitted.calib_a,
-            calib_b=fitted.calib_b,
-            margin_sigma=fitted.margin_sigma,
-            elo_per_point=fitted.elo_per_point,
-        )
+        cfg = fitted
+        cfg.starting_bankroll = args.bankroll
+        cfg.min_edge = best_edge
     else:
         best_edge = args.min_edge
         grid = []
         a, b, sigma = engine.fit_calibration(
-            prior_for_tune, tune_sched, tune_odds, markets=markets  # type: ignore[arg-type]
+            prior_for_tune,
+            tune_sched,
+            tune_odds,
+            markets=markets,  # type: ignore[arg-type]
+            base=base,
+            **tune_kw,
         )
         cfg = BettingConfig(
             min_edge=best_edge,
@@ -101,10 +138,25 @@ def main() -> int:
             calib_a=a,
             calib_b=b,
             margin_sigma=sigma,
+            market_shrink=base.market_shrink,
+            elo_blend=base.elo_blend,
+            srs_blend=base.srs_blend,
+            use_rest=base.use_rest,
+            use_pace=base.use_pace,
+            use_injuries=base.use_injuries,
+            pace_ema_alpha=base.pace_ema_alpha,
+            injury_mpg_coeff=base.injury_mpg_coeff,
+            injury_total_coeff=base.injury_total_coeff,
+            injury_questionable_weight=base.injury_questionable_weight,
         )
 
     result = engine.run(
-        prior_for_holdout, holdout_sched, holdout_odds, config=cfg, calibrate_sigma=False
+        prior_for_holdout,
+        holdout_sched,
+        holdout_odds,
+        config=cfg,
+        calibrate_sigma=False,
+        **hold_kw,
     )
     print(f"\n=== Holdout {holdout} @ min_edge={best_edge:.2f} ===")
     print(json.dumps(result.metrics, indent=2))

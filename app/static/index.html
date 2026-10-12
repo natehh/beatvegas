@@ -256,6 +256,17 @@
         Bankroll
         <input id="bankroll" type="number" min="100" step="100" value="10000" />
       </label>
+      <fieldset class="mode-field">
+        <legend>Markets</legend>
+        <label class="inline"><input type="checkbox" name="bet-market" value="moneyline" checked /> ML</label>
+        <label class="inline"><input type="checkbox" name="bet-market" value="spread" checked /> Spread</label>
+        <label class="inline"><input type="checkbox" name="bet-market" value="total" /> Totals</label>
+      </fieldset>
+      <fieldset class="mode-field">
+        <legend>Features</legend>
+        <label class="inline"><input type="checkbox" id="use-pace" checked /> Pace</label>
+        <label class="inline"><input type="checkbox" id="use-injuries" /> Injuries</label>
+      </fieldset>
       <button type="submit" id="bet-btn">Run betting backtest</button>
     </form>
     <div class="status" id="bet-status">Ready for betting backtest.</div>
@@ -435,12 +446,20 @@
     document.getElementById("bet-form").addEventListener("submit", async (e) => {
       e.preventDefault();
       const edgeRaw = document.getElementById("min-edge").value;
+      const markets = Array.from(document.querySelectorAll('input[name="bet-market"]:checked')).map(x => x.value);
+      if (!markets.length) {
+        betStatus.classList.add("error");
+        betStatus.textContent = "Select at least one market.";
+        return;
+      }
       const body = {
         season: document.getElementById("bet-season").value,
         tune_season: document.getElementById("tune-season").value,
         min_edge: edgeRaw === "" ? null : Number(edgeRaw),
         bankroll: Number(document.getElementById("bankroll").value) || 10000,
-        markets: ["moneyline", "spread"],
+        markets,
+        use_pace: document.getElementById("use-pace").checked,
+        use_injuries: document.getElementById("use-injuries").checked,
       };
       setBusy(true, "Tuning edge and simulating bets…");
       betStatus.classList.remove("error");

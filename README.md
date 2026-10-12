@@ -48,16 +48,77 @@ Rules:
 
 ```bash
 python scripts/betting_cli.py --season 2024-25 --tune-season 2023-24
-python scripts/betting_cli.py --season 2024-25 --min-edge 0.03   # skip tuning
+python scripts/betting_cli.py --season 2024-25 --min-edge 0.03   # skip edge search
+python scripts/hillclimb_models.py                               # re-search model knobs
 ```
 
-Totals are deferred until an expected-points model exists.
+API: `POST /api/nba/betting` with `{ season, tune_season, min_edge?, bankroll, markets }`
+(`markets` may include `"total"`).
 
-API: `POST /api/nba/betting` with `{ season, tune_season, min_edge?, bankroll, markets }`.
+### Totals (v3)
 
-### Honest baseline (2024–25 holdout)
+Expected total from EMA team offense/defense + rest, vs Yahoo O/U lines.
+Hillclimb (`python scripts/hillclimb_totals.py`) over shrink/α/home-boost/rest:
 
-A plain Elo + calibrated edge rule **does not currently beat Yahoo closing-style lines** on 2023–24 tune / 2024–25 holdout (negative ROI). That’s expected: closing markets are strong. The betting stack is there to tune rules and measure progress as the model gets better (injuries, priors, totals, etc.).
+| Market | Holdout ROI | Bets | Verdict |
+|--------|-------------|------|---------|
+| ML+spread (locked) | ≈ **+0.4%** | ~680 | best so far |
+| Totals (best joint) | ≈ **−10%** | ~800 | worse than sides |
+
+Totals are wired in the UI/CLI but **not** the default bet market.
+
+### Model stack (v2)
+
+Predictions use an **ensemble**:
+- Dual Elo (slow K=12 + fast K=36) for recency
+- SRS (point differential + SOS)
+- Rest / B2B margin adjustments
+- Outcome calibration + walk-forward `min_edge` tuning
+
+Hillclimb (`python scripts/hillclimb_models.py`) searched shrink / blend / rest / markets.
+Locked defaults in `core/defaults.py` (ML+spread, elo_blend=0.7, rest on, shrink=0):
+
+| Window | ROI | Bets | Notes |
+|--------|-----|------|-------|
+| 2023–24 tune | ≈ −5.3% | ~660 | used only to pick edge |
+| 2024–25 holdout | ≈ **+0.4%** | ~680 | flat 1% units, $10k roll |
+
+A flashier spread-only +1.9% holdout config was **rejected** (tune ROI ≈ −36%, n≈50 — overfit).
+
+### Pace + injuries
+
+| Feature | Default | 2024–25 holdout (walk-forward) |
+|---------|---------|--------------------------------|
+| Baseline (no pace/inj) | — | ≈ **+0.4%** ROI (~680 bets) |
+| **Pace** (BRef EMA, α=0.15) | **on** | ≈ **+0.6%** ROI (~680 bets) |
+| Injuries (NBA reports × prior MPG) | **off** (opt-in) | ≈ −6% to −12% — not locked |
+
+```bash
+python scripts/hillclimb_pace_injuries.py
+python scripts/betting_cli.py --no-pace          # ablation
+python scripts/betting_cli.py                    # pace on, injuries off
+```
+
+## Player props — forward collection
+
+Historical prop closes are not free at season scale, so we **record going forward** and settle against box scores.
+
+1. Get a free key at [the-odds-api.com](https://the-odds-api.com/) (~500 credits/month).
+2. Export it and snapshot upcoming NBA props (points / rebounds / assists by default):
+
+```bash
+export THE_ODDS_API_KEY=your_key
+python scripts/collect_prop_odds.py                  # ~3 credits × N games in next 36h
+python scripts/collect_prop_odds.py --max-events 5   # credit-safe smoke
+python scripts/settle_prop_odds.py                   # grade finished games via ESPN
+```
+
+Ledger files (gitignored):
+- `data/props/prop_quotes.jsonl` — each book/market/player/line snapshot
+- `data/props/prop_settled.jsonl` — joined actuals + over/under results
+- `data/props/snapshots/<timestamp>/` — raw API payloads
+
+Suggested cadence: **1× daily pregame** (and optionally again near tip for a crude open→close pair). Extended markets: `--extended` (more credits).
 
 ## Tests
 
@@ -73,7 +134,10 @@ pytest -q
 | `sports/nba/` | NBA adapter + disk cache |
 | `app/` | FastAPI + static HTML |
 | `scripts/backtest_cli.py` | Headless eval for tuning |
+| `scripts/collect_prop_odds.py` | Forward prop-odds snapshots |
+| `scripts/settle_prop_odds.py` | Settle props vs ESPN box scores |
 | `data/cache/` | Cached schedules/results (gitignored) |
+| `data/props/` | Prop quote ledger (gitignored) |
 
 ## Adding another sport
 
