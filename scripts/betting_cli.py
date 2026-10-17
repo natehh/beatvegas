@@ -13,7 +13,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from core.betting import BettingConfig, BettingEngine, tune_min_edge
-from core.defaults import DEFAULT_BETTING_CONFIG
+from core.defaults import DEFAULT_BETTING_CONFIG, PUBLIC_FADE_CONFIG
 from sports.nba.adapter import NbaAdapter, prior_season
 from sports.nba.features import features_to_engine_kwargs, load_season_features
 from sports.nba.odds import load_odds_for_season, match_rate
@@ -33,6 +33,11 @@ def main() -> int:
     p.add_argument("--no-pace", action="store_true", help="Disable pace scaling")
     p.add_argument("--no-injuries", action="store_true", help="Disable injury adjustments")
     p.add_argument("--refresh-odds", action="store_true")
+    p.add_argument(
+        "--public-fade",
+        action="store_true",
+        help="Run the public-fade spread preset (fade 65-72%% public sides) instead of the team model",
+    )
     p.add_argument("--json", action="store_true")
     args = p.parse_args()
 
@@ -53,8 +58,8 @@ def main() -> int:
     tune_odds = load_odds_for_season(tune_season, force_refresh=args.refresh_odds)
     holdout_odds = load_odds_for_season(holdout, force_refresh=args.refresh_odds)
 
-    use_pace = not args.no_pace
-    use_injuries = not args.no_injuries
+    use_pace = not args.no_pace and not args.public_fade
+    use_injuries = not args.no_injuries and not args.public_fade
     print("Loading pace / injury features…", file=sys.stderr)
     tune_feat = load_season_features(
         tune_season,
@@ -102,7 +107,18 @@ def main() -> int:
         injury_questionable_weight=DEFAULT_BETTING_CONFIG.injury_questionable_weight,
     )
 
-    if args.min_edge is None:
+    if args.public_fade:
+        from dataclasses import replace
+
+        cfg = replace(PUBLIC_FADE_CONFIG, starting_bankroll=args.bankroll)
+        best_edge = cfg.min_edge
+        grid = []
+        print(
+            "Public-fade preset: spread only, fade sides drawing "
+            f"{cfg.public_fade_threshold:.0f}-{cfg.public_fade_max_threshold:.0f}% of public wagers",
+            file=sys.stderr,
+        )
+    elif args.min_edge is None:
         best_edge, grid, fitted = tune_min_edge(
             engine, prior_for_tune, tune_sched, tune_odds, base=base, **tune_kw
         )

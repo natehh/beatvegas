@@ -55,6 +55,44 @@ python scripts/hillclimb_models.py                               # re-search mod
 API: `POST /api/nba/betting` with `{ season, tune_season, min_edge?, bankroll, markets }`
 (`markets` may include `"total"`).
 
+### Public fade — the edge that survived walk-forward testing
+
+An extensive sweep (closing ML/spread/total vs Elo/SRS ensemble, rest/travel/
+ATS-form, NBA.com advanced stats, line movement, cross-book and cross-market
+checks, playoffs, second-half lines, and public betting splits) found closing
+team markets to be very efficient: the team model above was **negative** on
+the 2022-23 (−0.4%) and 2023-24 (−12.5%) walk-forward holdouts in
+`scripts/walkforward_research.py` (no-pace variant). The one rule that was
+positive in **every** season tested uses a data field the Yahoo CSV already
+carried but the loader discarded — public betting splits:
+
+> When one side draws **65-72% of public wagers**, bet the other side at the
+> posted spread, flat 1% units. Splits ≥72% are *not* faded (they tend to
+> reflect genuine mismatches), and fading all ≥65% splits was only ~+1% and
+> negative in 2024-25.
+
+| Season | Bets | Hit | ROI |
+|--------|------|-----|-----|
+| 2021-22 | 223 | 54.7% | +4.4% |
+| 2022-23 | 196 | 55.1% | +5.5% |
+| 2023-24 | 187 | 55.6% | +6.1% |
+| 2024-25 | 269 | 54.3% | +3.5% |
+| **All** | **875** | **54.9%** | **+4.7%** |
+
+```bash
+python scripts/walkforward_research.py                  # model vs public fade, all holdouts
+python scripts/betting_cli.py --season 2024-25 --public-fade
+```
+
+Caveats: ~875 bets is a modest sample (ROI 95% CI roughly −1% to +11%), Yahoo
+split coverage is 75-100% of games depending on season, and the effect is a
+market-microstructure signal (book shading of popular sides), so it may decay
+if splits reporting or book pricing changes. Two model bugs found along the
+way were also fixed: back-to-backs were misclassified (1 day of rest counted
+as a B2B), and home court was double-counted in the ensemble margin
+(Elo + SRS home edges blended, ~+1 pt home bias); home court is now a single
+`home_advantage_points=2.3` term.
+
 ### Totals (v3)
 
 Expected total from EMA team offense/defense + rest, vs Yahoo O/U lines.

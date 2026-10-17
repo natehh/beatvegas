@@ -40,4 +40,35 @@ DEFAULT_BETTING_CONFIG = BettingConfig(
     injury_mpg_coeff=4.0,
     injury_total_coeff=2.5,
     injury_questionable_weight=0.25,
+    home_advantage_points=2.3,
+)
+
+# Public-fade spread strategy — the only rule that was positive in every
+# walk-forward holdout season tested (see scripts/walkforward_research.py).
+# When one side draws 65-72% of public wagers (Yahoo betting splits), bet the
+# other side at the posted spread, flat 1% units. Extremely lopsided splits
+# (>=72%) are excluded: they tend to reflect genuine mismatches, and fading
+# them was not profitable. Fading *all* >=65% splits was only ~+1% ROI and
+# negative in 2024-25; the band was positive in 2021-22 through 2024-25.
+# Mixing these bets with team-model bets diluted the return (the model-only
+# strategy was negative on the 2022-23 and 2023-24 holdouts), so this preset
+# runs fade-only. Treat the edge as modest and regime-sensitive, not a lock.
+PUBLIC_FADE_CONFIG = BettingConfig(
+    markets=("spread",),
+    # Fade candidates bypass the model-edge filter; min_edge is set high so
+    # only public-fade candidates (admitted separately) are bet.
+    min_edge=0.99,
+    flat_unit_frac=0.01,
+    kelly_fraction=0.25,
+    max_bet_frac=0.05,
+    starting_bankroll=10_000.0,
+    one_bet_per_game=True,
+    use_rest=True,
+    use_pace=False,
+    use_injuries=False,
+    use_public_fade=True,
+    public_fade_threshold=65.0,
+    public_fade_max_threshold=72.0,
+    public_fade_only=True,
+    home_advantage_points=2.3,
 )

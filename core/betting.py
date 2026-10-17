@@ -121,6 +121,10 @@ class BettingConfig:
     # wagers, the opposite side is bettable even without a model edge.
     use_public_fade: bool = False
     public_fade_threshold: float = 65.0
+    # Optional upper bound: only fade a *moderately* lopsided public split
+    # ([threshold, max)). Extremely lopsided splits (>~72%) tend to reflect
+    # genuine mismatches and did not fade profitably in backtests.
+    public_fade_max_threshold: Optional[float] = None
     # When True, spread bets are restricted to the fade side only.
     public_fade_only: bool = False
     use_injuries: bool = True
@@ -192,6 +196,7 @@ class BettingResult:
                 "post_calib_shrink": self.config.post_calib_shrink,
                 "use_public_fade": self.config.use_public_fade,
                 "public_fade_threshold": self.config.public_fade_threshold,
+                "public_fade_max_threshold": self.config.public_fade_max_threshold,
                 "public_fade_only": self.config.public_fade_only,
                 "use_injuries": self.config.use_injuries,
                 "injury_mpg_coeff": self.config.injury_mpg_coeff,
@@ -348,6 +353,7 @@ def _copy_cfg(cfg: BettingConfig, **overrides) -> BettingConfig:
         "post_calib_shrink": cfg.post_calib_shrink,
         "use_public_fade": cfg.use_public_fade,
         "public_fade_threshold": cfg.public_fade_threshold,
+        "public_fade_max_threshold": cfg.public_fade_max_threshold,
         "public_fade_only": cfg.public_fade_only,
         "use_injuries": cfg.use_injuries,
         "injury_mpg_coeff": cfg.injury_mpg_coeff,
@@ -617,15 +623,18 @@ class BettingEngine:
             # public_fade_only, non-fade spread candidates are dropped.
             if cfg.use_public_fade and o is not None:
                 fade_side: Optional[str] = None
-                if (
-                    o.spread_home_wager_pct is not None
-                    and o.spread_home_wager_pct >= cfg.public_fade_threshold
-                ):
+
+                def _in_fade_band(pct: Optional[float]) -> bool:
+                    if pct is None or pct < cfg.public_fade_threshold:
+                        return False
+                    return (
+                        cfg.public_fade_max_threshold is None
+                        or pct < cfg.public_fade_max_threshold
+                    )
+
+                if _in_fade_band(o.spread_home_wager_pct):
                     fade_side = "away"
-                elif (
-                    o.spread_away_wager_pct is not None
-                    and o.spread_away_wager_pct >= cfg.public_fade_threshold
-                ):
+                elif _in_fade_band(o.spread_away_wager_pct):
                     fade_side = "home"
                 if cfg.public_fade_only:
                     candidates = [
