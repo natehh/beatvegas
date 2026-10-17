@@ -115,6 +115,19 @@ def test_fade_band_bets_opposite_of_popular_side():
     assert mod.fade_bets([quiet], "away_bets", "home_bets", band) == []
 
 
+def test_elo_update_rewards_home_win_and_season_of():
+    elo = mod.Elo()
+    before = elo.diff("H", "A", neutral=False)
+    elo.update("H", "A", margin=10, neutral=False)
+    assert elo.diff("H", "A", neutral=False) > before
+    assert elo.games_played == {"H": 1, "A": 1}
+    # neutral site removes the home edge from the diff
+    assert elo.diff("H", "A", neutral=True) < elo.diff("H", "A", neutral=False)
+    assert mod.season_of("2025-11-20") == "2025-26"
+    assert mod.season_of("2026-03-20") == "2025-26"
+    assert mod.season_of("2026-09-05") == "2026-27"
+
+
 def test_fade_uses_each_sides_reported_pct_not_complement():
     # VI occasionally reports pairs that do not sum to 100; both sides in the
     # band means no bet (ambiguous), only one side in band means fade it.

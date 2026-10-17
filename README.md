@@ -126,6 +126,18 @@ and unconditional home/favourite/underdog baselines (dogs came closest:
 51.4% ATS, still −2.0% after the vig) all lost money. Nothing in the
 splits/lines data clears the vig in college basketball.
 
+A team-strength model doesn't beat it either. A 538-style Elo (MOV
+multiplier, between-season regression) built sequentially from all ESPN
+D1 results, calibrated Elo→points on 2024-25 and held out on 2025-26,
+lost **−3.8% to −5.8% at every edge threshold** betting *with* the model
+against the VI consensus line; *fading* the model (taking the market
+side whenever they disagreed) lost −3.3% to −5.4%, and a rolling-scoring
+totals model lost on both seasons too. The only positive cell anywhere
+was the tuning season at edge ≥6 pts (+1.8%, n=683), which flipped to
+−5.8% on the holdout — textbook overfitting. Conclusion: the college
+consensus line is efficient relative to public-data ratings, in both
+directions. (Model test included in the same research script.)
+
 The NCAAF result needs an asterisk the size of a billboard: the sample is
 small (bootstrap 95% CI for the ≥80% ROI is roughly −2% to +23%), the
 ≥72%+ bands were found by scanning, and the effect is mostly *not* the

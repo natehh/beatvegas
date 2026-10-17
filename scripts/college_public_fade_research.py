@@ -28,6 +28,13 @@ Headline results (flat $100 bets at VI consensus line/price):
     usually the -30 favourite. Unconditional big-favourite betting was
     also positive. Treat as a lead for forward tracking, NOT a locked
     strategy — hence no preset in core/defaults.py.
+  * NCAAB team model (538-style Elo + rolling-scoring totals model,
+    calibrated on 2024-25, held out on 2025-26): betting WITH the model
+    lost -3.8% to -5.8% at every edge threshold, FADING the model lost
+    -3.3% to -5.4%, and the totals model lost too. The one positive
+    tuning-season cell (edge >= 6 pts, +1.8%) flipped to -5.8% on the
+    holdout — textbook overfitting. The consensus line is efficient
+    relative to a public-data Elo.
 
 Usage:
     python scripts/college_public_fade_research.py            # scrape + analyze
@@ -46,6 +53,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import date, timedelta
 from pathlib import Path
 
+import numpy as np
 from bs4 import BeautifulSoup
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -573,6 +581,229 @@ def analyze(rows: list[dict]) -> None:
             print(f"   |spread| {lab:8s} bet-dog: {summarize(dog)} | bet-fav: {summarize(fav)}")
 
 
+# ------------------------------------------------------- NCAAB team-model test
+def season_of(datestr: str) -> str:
+    d = date.fromisoformat(datestr[:10])
+    if d.month >= 8:
+        return f"{d.year}-{str(d.year + 1)[-2:]}"
+    return f"{d.year - 1}-{str(d.year)[-2:]}"
+
+
+class Elo:
+    """538-style Elo with margin-of-victory multiplier (cf. core/elo.py)."""
+
+    def __init__(self, k: float = 20.0, hca: float = 100.0, scale: float = 400.0):
+        self.r: dict[str, float] = {}
+        self.games_played: dict[str, int] = {}
+        self.k, self.hca, self.scale = k, hca, scale
+
+    def get(self, t: str) -> float:
+        return self.r.get(t, 1500.0)
+
+    def diff(self, home: str, away: str, neutral: bool) -> float:
+        return self.get(home) + (0.0 if neutral else self.hca) - self.get(away)
+
+    def update(self, home: str, away: str, margin: int, neutral: bool) -> None:
+        d = self.diff(home, away, neutral)
+        exp_home = 1.0 / (1.0 + 10 ** (-d / self.scale))
+        mov = min(1.75, np.log(abs(margin) + 1.0) * (2.2 / (0.001 * abs(d) + 2.2))) \
+            if margin != 0 else 0.0
+        delta = self.k * mov * ((1.0 if margin > 0 else 0.0) - exp_home)
+        self.r[home] = self.get(home) + delta
+        self.r[away] = self.get(away) - delta
+        self.games_played[home] = self.games_played.get(home, 0) + 1
+        self.games_played[away] = self.games_played.get(away, 0) + 1
+
+    def regress_season(self) -> None:
+        if not self.r:
+            return
+        mean = float(np.mean(list(self.r.values())))
+        for t in self.r:
+            self.r[t] = self.r[t] * (2 / 3) + mean * (1 / 3)
+
+
+def _load_espn_games() -> list[dict]:
+    """All ESPN NCAAB games from the cached scoreboard responses."""
+    games: dict[str, dict] = {}
+    for f in sorted(_cache_dir.glob("espn_ncaab_*.json")):
+        try:
+            d = json.loads(f.read_text())
+        except Exception:
+            continue
+        for ev in d.get("events", []):
+            try:
+                comp = ev["competitions"][0]
+                t = {}
+                for c in comp["competitors"]:
+                    team = c["team"]
+                    t[c["homeAway"]] = {
+                        "id": str(team.get("id")),
+                        "location": (team.get("location") or "").strip(),
+                        "score": int(c["score"]),
+                    }
+                games[str(ev["id"])] = {
+                    "espn_id": str(ev["id"]),
+                    "date": ev.get("date") or comp.get("date"),
+                    "neutral": bool(comp.get("neutralSite")),
+                    "home": t["home"],
+                    "away": t["away"],
+                }
+            except Exception:
+                continue
+    return sorted(games.values(), key=lambda g: (g["date"], g["espn_id"]))
+
+
+def model_analysis(games: list[dict]) -> None:
+    """Elo fair line vs VI consensus: tune on 2024-25, hold out 2025-26.
+
+    Tests betting WITH the model and FADING it (taking the market side
+    whenever the model disagrees by >= threshold points), plus a simple
+    rolling-scoring totals model. All predictions are strictly pregame.
+    """
+    print("\n===== NCAAB team model (Elo) vs consensus line =====")
+    espn = _load_espn_games()
+    if not espn:
+        print("no cached ESPN games; run a full scrape first")
+        return
+    espn_by_id = {g["espn_id"]: g for g in espn}
+
+    def _close(a: str, b: str) -> bool:
+        return a == b or a in b or b in a or \
+            re.sub(r" state$", "", a) == re.sub(r" state$", "", b)
+
+    orientation: dict[str, bool] = {}  # espn_id -> VI away is ESPN away
+    for g in games:
+        eid = g.get("espn_id")
+        if eid is None:
+            continue
+        eg = espn_by_id.get(str(eid))
+        if not eg:
+            continue
+        ea, eh = norm(eg["away"]["location"]), norm(eg["home"]["location"])
+        va, vh = norm(g.get("away")), norm(g.get("home"))
+        if _close(ea, va) and _close(eh, vh):
+            orientation[str(eid)] = True
+        elif _close(ea, vh) and _close(eh, va):
+            orientation[str(eid)] = False
+
+    elo = Elo()
+    ppg_for: dict[str, float] = {}
+    ppg_against: dict[str, float] = {}
+    cnt: dict[str, int] = {}
+    pred: dict[str, dict] = {}
+    cur_season = None
+    for g in espn:
+        s = season_of(g["date"])
+        if cur_season is not None and s != cur_season:
+            elo.regress_season()
+            ppg_for = {t: 71.0 + (v - 71.0) * 0.5 for t, v in ppg_for.items()}
+            ppg_against = {t: 71.0 + (v - 71.0) * 0.5 for t, v in ppg_against.items()}
+            cnt = {t: max(3, int(c * 0.5)) for t, c in cnt.items()}
+        cur_season = s
+        h, a = g["home"]["id"], g["away"]["id"]
+        if g["espn_id"] in orientation:
+            def adj(t, d):
+                c = cnt.get(t, 0)
+                return (d.get(t, 71.0) * c + 71.0 * 5) / (c + 5)
+
+            pred[g["espn_id"]] = {
+                "elo_diff": elo.diff(h, a, g["neutral"]),
+                "min_games": min(elo.games_played.get(h, 0), elo.games_played.get(a, 0)),
+                "pred_total": adj(h, ppg_for) + adj(a, ppg_for)
+                + (adj(h, ppg_against) - 71.0) + (adj(a, ppg_against) - 71.0),
+                "season": s,
+            }
+        margin = g["home"]["score"] - g["away"]["score"]
+        elo.update(h, a, margin, g["neutral"])
+        for tid, scored, allowed in (
+            (h, g["home"]["score"], g["away"]["score"]),
+            (a, g["away"]["score"], g["home"]["score"]),
+        ):
+            c = cnt.get(tid, 0)
+            ppg_for[tid] = (ppg_for.get(tid, 71.0) * c + scored) / (c + 1)
+            ppg_against[tid] = (ppg_against.get(tid, 71.0) * c + allowed) / (c + 1)
+            cnt[tid] = c + 1
+
+    bet_rows = []
+    for g in games:
+        eid = g.get("espn_id")
+        if eid is None or str(eid) not in pred:
+            continue
+        t = g.get("trends")
+        if not t or len(t.get("bets") or []) != 2:
+            continue
+        if g.get("away_score") is None or g.get("orientation_unknown"):
+            continue
+        away_line, away_price = parse_price(g.get("away_consensus"))
+        home_line, home_price = parse_price(g.get("home_consensus"))
+        if away_line is None or home_line is None or abs(away_line + home_line) > 0.51:
+            continue
+        cons = (t.get("consensus") or {}).get("total") or ""
+        m = re.search(r"([ou])\s*(\d+(?:\.\d+)?)", cons)
+        p = pred[str(eid)]
+        bet_rows.append(
+            {
+                "season": g.get("season_label"),
+                "margin": g["home_score"] - g["away_score"],
+                "total_pts": g["home_score"] + g["away_score"],
+                "away_line": away_line, "home_line": home_line,
+                "away_price": away_price, "home_price": home_price,
+                "total_line": float(m.group(2)) if m else None,
+                "elo_diff": p["elo_diff"] if orientation[str(eid)] else -p["elo_diff"],
+                "min_games": p["min_games"],
+                "pred_total": p["pred_total"],
+            }
+        )
+    print(f"bettable rows with model predictions: {len(bet_rows)}")
+
+    s1 = [r for r in bet_rows if r["season"] == "2024-25" and r["min_games"] >= 3]
+    s2 = [r for r in bet_rows if r["season"] == "2025-26"]
+    x = np.array([r["elo_diff"] for r in s1])
+    y = np.array([r["margin"] for r in s1], dtype=float)
+    coef, *_ = np.linalg.lstsq(np.column_stack([np.ones_like(x), x]), y, rcond=None)
+    a, b = coef
+    print(f"calibration 2024-25 (n={len(s1)}): margin = {a:.2f} + {b:.4f} * elo_diff")
+    for r in bet_rows:
+        r["edge_home"] = (a + b * r["elo_diff"]) + r["home_line"]
+
+    def spread_bets(rows, thresh, direction="with", min_games=5):
+        out = []
+        for r in rows:
+            if r["min_games"] < min_games or abs(r["edge_home"]) < thresh:
+                continue
+            side = "home" if r["edge_home"] > 0 else "away"
+            if direction == "fade":
+                side = "away" if side == "home" else "home"
+            out.append(settle_spread(r, side))
+        return out
+
+    print("-- spread, bet WITH model (tune on 2024-25) --")
+    for th in (0, 2, 4, 6, 8):
+        print(f"   th>={th}: {summarize(spread_bets(s1, th))}")
+    print("-- spread, bet WITH model (holdout 2025-26) --")
+    for th in (0, 2, 4, 6, 8):
+        print(f"   th>={th}: {summarize(spread_bets(s2, th))}")
+    print("-- spread, FADE model (holdout 2025-26) --")
+    for th in (2, 4, 6, 8):
+        print(f"   th>={th}: {summarize(spread_bets(s2, th, direction='fade'))}")
+
+    def total_bets(rows, thresh, min_games=5):
+        out = []
+        for r in rows:
+            if r["min_games"] < min_games or r["total_line"] is None:
+                continue
+            e = r["pred_total"] - r["total_line"]
+            if abs(e) < thresh:
+                continue
+            out.append(settle_total(r, "over" if e > 0 else "under"))
+        return out
+
+    print("-- totals model (tune 2024-25 / holdout 2025-26) --")
+    for th in (0, 4, 6, 8):
+        print(f"   th>={th}: tune {summarize(total_bets(s1, th))} | "
+              f"holdout {summarize(total_bets(s2, th))}")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--cache-dir", type=Path, default=DEFAULT_CACHE)
@@ -595,6 +826,7 @@ def main() -> None:
         print(f"wrote {dataset_path}")
 
     analyze(build_rows(games))
+    model_analysis(games)
 
 
 if __name__ == "__main__":
