@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 
 from core.backtest import BacktestRunner
 from core.betting import BettingConfig, BettingEngine, tune_min_edge
-from core.defaults import DEFAULT_BETTING_CONFIG
+from core.defaults import DEFAULT_BETTING_CONFIG, PUBLIC_FADE_CONFIG
 from core.elo import EloConfig
 from sports.nba.adapter import NbaAdapter, prior_season
 from sports.nba.features import features_to_engine_kwargs, load_season_features
@@ -52,6 +52,7 @@ class BettingRequest(BaseModel):
     refresh_odds: bool = False
     use_pace: bool = True
     use_injuries: bool = False
+    public_fade: bool = False
 
 
 @app.get("/")
@@ -94,6 +95,34 @@ def nba_betting(req: BettingRequest) -> dict:
         holdout_odds = load_odds_for_season(req.season, force_refresh=req.refresh_odds)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Failed to load betting data: {exc}") from exc
+
+    if req.public_fade:
+        # Validated preset: spread-only, no tuning, no pace/injury features.
+        cfg = BettingConfig(
+            markets=PUBLIC_FADE_CONFIG.markets,
+            min_edge=PUBLIC_FADE_CONFIG.min_edge,
+            flat_unit_frac=PUBLIC_FADE_CONFIG.flat_unit_frac,
+            kelly_fraction=req.kelly_fraction,
+            starting_bankroll=req.bankroll,
+            use_public_fade=True,
+            public_fade_threshold=PUBLIC_FADE_CONFIG.public_fade_threshold,
+            public_fade_max_threshold=PUBLIC_FADE_CONFIG.public_fade_max_threshold,
+            public_fade_only=True,
+            home_advantage_points=PUBLIC_FADE_CONFIG.home_advantage_points,
+        )
+        result = _betting.run(prior_hold, holdout_sched, holdout_odds, config=cfg)
+        hold_keys = {
+            (g.date, g.home_team_id, g.away_team_id)
+            for g in holdout_sched.completed_games()
+        }
+        payload = result.to_dict()
+        payload["selected_min_edge"] = PUBLIC_FADE_CONFIG.min_edge
+        payload["tune_season"] = None
+        payload["tune_grid"] = []
+        payload["odds_match_rate"] = round(match_rate(holdout_odds, hold_keys), 4)
+        payload["bets"] = payload["bets"][:100]
+        payload["strategy"] = "public_fade"
+        return payload
 
     markets = tuple(req.markets)
     try:

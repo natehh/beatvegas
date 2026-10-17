@@ -84,6 +84,9 @@ python scripts/walkforward_research.py                  # model vs public fade, 
 python scripts/betting_cli.py --season 2024-25 --public-fade
 ```
 
+Also available via the API: `POST /api/nba/betting` with
+`{ "season": "2024-25", "public_fade": true }` (returns `"strategy": "public_fade"`).
+
 Caveats: ~875 bets is a modest sample (ROI 95% CI roughly −1% to +11%), Yahoo
 split coverage is 75-100% of games depending on season, and the effect is a
 market-microstructure signal (book shading of popular sides), so it may decay
