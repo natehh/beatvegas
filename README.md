@@ -117,6 +117,15 @@ NCAAB 2024-25 (from mid-Nov) + 2025-26 (~9,800 settled games), NCAAF
 | NCAAF fade, ≥75% of bets | 256 | 56.6% | +7.6% |
 | NCAAF fade, ≥80% of bets | 196 | 58.2% | +10.5% (both seasons positive) |
 
+For NCAAB the negative result is comprehensive, not just the headline
+bands: fading was negative for popular home sides and popular away sides,
+popular favourites (−1.9%, the least-bad slice) and popular underdogs,
+in the tournament window and in the regular season; bets-vs-money
+"sharp divergence" sides, open→close line-movement follow *and* fade,
+and unconditional home/favourite/underdog baselines (dogs came closest:
+51.4% ATS, still −2.0% after the vig) all lost money. Nothing in the
+splits/lines data clears the vig in college basketball.
+
 The NCAAF result needs an asterisk the size of a billboard: the sample is
 small (bootstrap 95% CI for the ≥80% ROI is roughly −2% to +23%), the
 ≥72%+ bands were found by scanning, and the effect is mostly *not* the
