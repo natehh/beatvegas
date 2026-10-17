@@ -96,6 +96,41 @@ as a B2B), and home court was double-counted in the ensemble margin
 (Elo + SRS home edges blended, ~+1 pt home bias); home court is now a single
 `home_advantage_points=2.3` term.
 
+### Does the public fade transfer to college sports?
+
+Short answer: **no for college basketball; maybe, weakly, for college
+football** (`scripts/college_public_fade_research.py`). No free archive of
+historical college splits exists in Yahoo/SBR form, so this uses
+VegasInsider's dated/weekly odds pages + per-game "betting trends"
+(bets%/money% splits, opening and consensus lines) with finals from ESPN.
+VI's splits match Yahoo's NBA splits on identical games (66% vs 66.2%),
+so the feed is the same family as the NBA strategy above. Coverage:
+NCAAB 2024-25 (from mid-Nov) + 2025-26 (~9,800 settled games), NCAAF
+2025 + partial 2026 (~1,240 games).
+
+| Test | Bets | Hit | ROI |
+|------|------|-----|-----|
+| NCAAB fade, NBA band 65-72% | 1,565 | 50.0% | **−4.4%** (both seasons ≈ −4%) |
+| NCAAB fade, all bands (≥55% to ≥80%, money% too) | — | — | all negative |
+| NCAAB totals fade (over ≥80% bets) | 2,157 | 52.3% | −0.2% (breakeven at best) |
+| NCAAF fade, NBA band 65-72% | 188 | 47.0% | −10.3% |
+| NCAAF fade, ≥75% of bets | 256 | 56.6% | +7.6% |
+| NCAAF fade, ≥80% of bets | 196 | 58.2% | +10.5% (both seasons positive) |
+
+The NCAAF result needs an asterisk the size of a billboard: the sample is
+small (bootstrap 95% CI for the ≥80% ROI is roughly −2% to +23%), the
+≥72%+ bands were found by scanning, and the effect is mostly *not* the
+NBA mechanism. In lopsided college matchups the public takes the huge
+underdog (+30), so "fading" usually means laying −30 with the favourite;
+unconditionally, NCAAF favourites of 21+ covered 55.5% (+5.7% ROI, n=347)
+with no splits filter at all. Meanwhile the money% (handle) version of
+the fade is flat, and NCAAB favourites show no such pattern. Verdict:
+college basketball definitively rejects the rule; college football has a
+suggestive big-favourite/extreme-splits effect worth forward-tracking,
+but it is **not** locked in as a preset. Reproduce with
+`python scripts/college_public_fade_research.py` (first run scrapes
+VegasInsider + ESPN into `data/cache/college_vi/`; later runs are cached).
+
 ### Totals (v3)
 
 Expected total from EMA team offense/defense + rest, vs Yahoo O/U lines.
