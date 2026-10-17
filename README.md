@@ -126,17 +126,26 @@ and unconditional home/favourite/underdog baselines (dogs came closest:
 51.4% ATS, still −2.0% after the vig) all lost money. Nothing in the
 splits/lines data clears the vig in college basketball.
 
-A team-strength model doesn't beat it either. A 538-style Elo (MOV
-multiplier, between-season regression) built sequentially from all ESPN
-D1 results, calibrated Elo→points on 2024-25 and held out on 2025-26,
-lost **−3.8% to −5.8% at every edge threshold** betting *with* the model
-against the VI consensus line; *fading* the model (taking the market
-side whenever they disagreed) lost −3.3% to −5.4%, and a rolling-scoring
-totals model lost on both seasons too. The only positive cell anywhere
-was the tuning season at edge ≥6 pts (+1.8%, n=683), which flipped to
-−5.8% on the holdout — textbook overfitting. Conclusion: the college
-consensus line is efficient relative to public-data ratings, in both
-directions. (Model test included in the same research script.)
+A team-strength model doesn't beat it either — and the choice of model
+family doesn't matter. All of the following were built strictly
+pregame, calibrated/tuned on 2024-25 and held out on 2025-26 against
+the VI consensus line: a 538-style **Elo** (MOV multiplier,
+between-season regression) from all ESPN D1 results; **Massey
+least-squares** power ratings (weekly ridge refits on margins); an
+**adjusted efficiency** model (per-team offence/defence least squares
+on scores, KenPom-style); **ridge and gradient boosting** on pregame
+features (all three ratings, recent form, rest, scoring), including a
+market-residual target; and a rolling-scoring totals model. Betting
+*with* any of them lost −3% to −6.4% at every edge threshold on the
+holdout; *fading* them (taking the market side whenever they
+disagreed) lost −2.8% to −5.3% as well. The gradient booster posted
++16% to +90% on the tuning season and −3% to −5% on the holdout —
+textbook overfitting, same as the one positive Elo tuning cell
+(edge ≥6 pts, +1.8%, which flipped to −5.8%). Conclusion: the college
+consensus line is efficient relative to public-data models of any
+family, in both directions. (Model tests:
+`scripts/college_public_fade_research.py` for Elo/totals,
+`scripts/college_model_families_research.py` for the rest.)
 
 The NCAAF result needs an asterisk the size of a billboard: the sample is
 small (bootstrap 95% CI for the ≥80% ROI is roughly −2% to +23%), the
