@@ -37,6 +37,16 @@ class OddsLine:
     under_odds: Optional[float] = None
     home_score: Optional[int] = None
     away_score: Optional[int] = None
+    # Public betting splits (% of wagers / % of money on each side), when the
+    # odds source reports them. Yahoo reports these for spread/ML/total.
+    spread_home_wager_pct: Optional[float] = None
+    spread_away_wager_pct: Optional[float] = None
+    spread_home_stake_pct: Optional[float] = None
+    spread_away_stake_pct: Optional[float] = None
+    money_home_wager_pct: Optional[float] = None
+    money_away_wager_pct: Optional[float] = None
+    total_over_wager_pct: Optional[float] = None
+    total_under_wager_pct: Optional[float] = None
 
     @property
     def is_final(self) -> bool:
@@ -102,6 +112,17 @@ class BettingConfig:
     # Pace / injuries
     use_pace: bool = True
     pace_ema_alpha: float = 0.15
+    # Home-court advantage in points (single term, see EnsembleConfig)
+    home_advantage_points: float = 2.3
+    # Extra shrink of calibrated probs toward the market (applied after
+    # outcome calibration). Previously hard-coded at 0.15 in the engine.
+    post_calib_shrink: float = 0.15
+    # Public-fade (spread): when one side draws >= threshold % of public
+    # wagers, the opposite side is bettable even without a model edge.
+    use_public_fade: bool = False
+    public_fade_threshold: float = 65.0
+    # When True, spread bets are restricted to the fade side only.
+    public_fade_only: bool = False
     use_injuries: bool = True
     injury_mpg_coeff: float = 4.0
     injury_total_coeff: float = 2.5
@@ -167,6 +188,11 @@ class BettingResult:
                 "b2b_penalty": self.config.b2b_penalty,
                 "use_rest": self.config.use_rest,
                 "use_pace": self.config.use_pace,
+                "home_advantage_points": self.config.home_advantage_points,
+                "post_calib_shrink": self.config.post_calib_shrink,
+                "use_public_fade": self.config.use_public_fade,
+                "public_fade_threshold": self.config.public_fade_threshold,
+                "public_fade_only": self.config.public_fade_only,
                 "use_injuries": self.config.use_injuries,
                 "injury_mpg_coeff": self.config.injury_mpg_coeff,
                 "pace_ema_alpha": self.config.pace_ema_alpha,
@@ -283,6 +309,7 @@ def _ensemble_from_config(cfg: BettingConfig) -> EnsembleModel:
             b2b_penalty=cfg.b2b_penalty if cfg.use_rest else 0.0,
             rest3_bonus=0.5 if cfg.use_rest else 0.0,
             market_shrink=cfg.market_shrink,
+            home_advantage_points=cfg.home_advantage_points,
         )
     )
 
@@ -317,6 +344,11 @@ def _copy_cfg(cfg: BettingConfig, **overrides) -> BettingConfig:
         "totals_b2b_penalty": cfg.totals_b2b_penalty,
         "use_pace": cfg.use_pace,
         "pace_ema_alpha": cfg.pace_ema_alpha,
+        "home_advantage_points": cfg.home_advantage_points,
+        "post_calib_shrink": cfg.post_calib_shrink,
+        "use_public_fade": cfg.use_public_fade,
+        "public_fade_threshold": cfg.public_fade_threshold,
+        "public_fade_only": cfg.public_fade_only,
         "use_injuries": cfg.use_injuries,
         "injury_mpg_coeff": cfg.injury_mpg_coeff,
         "injury_total_coeff": cfg.injury_total_coeff,
@@ -564,7 +596,7 @@ class BettingEngine:
             calibrated: list[EdgeOpportunity] = []
             for opp in opps:
                 p = apply_calibration(opp.model_prob, cfg.calib_a, cfg.calib_b)
-                p = (1.0 - 0.15) * p + 0.15 * opp.market_prob
+                p = (1.0 - cfg.post_calib_shrink) * p + cfg.post_calib_shrink * opp.market_prob
                 calibrated.append(
                     EdgeOpportunity(
                         market=opp.market,
@@ -579,6 +611,41 @@ class BettingEngine:
                 )
 
             candidates = [x for x in calibrated if x.edge >= cfg.min_edge]
+            # Public fade: bet against a side drawing an outsized share of
+            # public wagers. The fade-side spread candidate is admissible
+            # even when the team-strength model sees no edge; with
+            # public_fade_only, non-fade spread candidates are dropped.
+            if cfg.use_public_fade and o is not None:
+                fade_side: Optional[str] = None
+                if (
+                    o.spread_home_wager_pct is not None
+                    and o.spread_home_wager_pct >= cfg.public_fade_threshold
+                ):
+                    fade_side = "away"
+                elif (
+                    o.spread_away_wager_pct is not None
+                    and o.spread_away_wager_pct >= cfg.public_fade_threshold
+                ):
+                    fade_side = "home"
+                if cfg.public_fade_only:
+                    candidates = [
+                        x
+                        for x in candidates
+                        if x.market != "spread" or x.side == fade_side
+                    ]
+                if fade_side is not None and not any(
+                    x.market == "spread" and x.side == fade_side for x in candidates
+                ):
+                    fade_opp = next(
+                        (
+                            x
+                            for x in calibrated
+                            if x.market == "spread" and x.side == fade_side
+                        ),
+                        None,
+                    )
+                    if fade_opp is not None:
+                        candidates.append(fade_opp)
             if cfg.only_fade_favorites:
                 candidates = [
                     x

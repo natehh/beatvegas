@@ -16,11 +16,13 @@ class RestContext:
 
     @property
     def home_b2b(self) -> bool:
-        return self.home_days_rest <= 1
+        # days_rest counts full days off between games: playing Mon then Wed
+        # is 1 day of rest, not a back-to-back. Only 0 days off is a B2B.
+        return self.home_days_rest == 0
 
     @property
     def away_b2b(self) -> bool:
-        return self.away_days_rest <= 1
+        return self.away_days_rest == 0
 
     def margin_adjustment(self, *, b2b_penalty: float = 2.2, rest3_bonus: float = 0.5) -> float:
         """

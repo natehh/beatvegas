@@ -70,8 +70,8 @@ SEASON_DATE_RANGE = {
 
 
 def _cache_path(cache_dir: Path, season: str) -> Path:
-    # v2 includes totals (over/under) fields
-    return cache_dir / f"nba_{season.replace('/', '-')}_odds_v2.json"
+    # v3 includes public betting splits (wager/stake percentages)
+    return cache_dir / f"nba_{season.replace('/', '-')}_odds_v3.json"
 
 
 def yahoo_name_to_abbr(name: str) -> str:
@@ -157,6 +157,14 @@ def load_odds_for_season(
         total_line = _to_float(row.get("total_over_points"))
         over_odds = _to_float(row.get("total_over_odds"))
         under_odds = _to_float(row.get("total_under_odds"))
+        spread_home_wager = _to_float(row.get("spread_home_wager_percentage"))
+        spread_away_wager = _to_float(row.get("spread_away_wager_percentage"))
+        spread_home_stake = _to_float(row.get("spread_home_stake_percentage"))
+        spread_away_stake = _to_float(row.get("spread_away_stake_percentage"))
+        money_home_wager = _to_float(row.get("money_home_wager_percentage"))
+        money_away_wager = _to_float(row.get("money_away_wager_percentage"))
+        total_over_wager = _to_float(row.get("total_over_wager_percentage"))
+        total_under_wager = _to_float(row.get("total_under_wager_percentage"))
         if None in (home_ml, away_ml, home_spread, away_spread, home_sp_odds, away_sp_odds):
             continue
 
@@ -176,6 +184,14 @@ def load_odds_for_season(
                 total_line=total_line,
                 over_odds=over_odds,
                 under_odds=under_odds,
+                spread_home_wager_pct=spread_home_wager,
+                spread_away_wager_pct=spread_away_wager,
+                spread_home_stake_pct=spread_home_stake,
+                spread_away_stake_pct=spread_away_stake,
+                money_home_wager_pct=money_home_wager,
+                money_away_wager_pct=money_away_wager,
+                total_over_wager_pct=total_over_wager,
+                total_under_wager_pct=total_under_wager,
             )
         )
 
@@ -217,6 +233,14 @@ def _line_to_dict(line: OddsLine) -> dict:
         "under_odds": line.under_odds,
         "home_score": line.home_score,
         "away_score": line.away_score,
+        "spread_home_wager_pct": line.spread_home_wager_pct,
+        "spread_away_wager_pct": line.spread_away_wager_pct,
+        "spread_home_stake_pct": line.spread_home_stake_pct,
+        "spread_away_stake_pct": line.spread_away_stake_pct,
+        "money_home_wager_pct": line.money_home_wager_pct,
+        "money_away_wager_pct": line.money_away_wager_pct,
+        "total_over_wager_pct": line.total_over_wager_pct,
+        "total_under_wager_pct": line.total_under_wager_pct,
     }
 
 
@@ -237,6 +261,14 @@ def _line_from_dict(d: dict) -> OddsLine:
         under_odds=d.get("under_odds"),
         home_score=d.get("home_score"),
         away_score=d.get("away_score"),
+        spread_home_wager_pct=d.get("spread_home_wager_pct"),
+        spread_away_wager_pct=d.get("spread_away_wager_pct"),
+        spread_home_stake_pct=d.get("spread_home_stake_pct"),
+        spread_away_stake_pct=d.get("spread_away_stake_pct"),
+        money_home_wager_pct=d.get("money_home_wager_pct"),
+        money_away_wager_pct=d.get("money_away_wager_pct"),
+        total_over_wager_pct=d.get("total_over_wager_pct"),
+        total_under_wager_pct=d.get("total_under_wager_pct"),
     )
 
 

@@ -22,6 +22,10 @@ class EnsembleConfig:
     slow_weight: float = 0.55
     fast_weight: float = 0.45
     home_advantage_elo: float = 100.0
+    # Single home-court term (points) applied once in margin space. The Elo
+    # (100 pts / 28 ≈ 3.6) and SRS (2.5) home edges used to be blended on top
+    # of each other, inflating expected home margins by ~1 pt vs the market.
+    home_advantage_points: float = 2.3
     season_regression: float = 1.0 / 3.0
     # Blend strengths in probability / margin space
     elo_blend: float = 0.55  # vs SRS
@@ -113,11 +117,12 @@ class EnsembleModel:
         margin_adj: float = 0.0,
         pace_scale: float = 1.0,
     ) -> float:
-        hca_elo = 0.0 if is_neutral else self.config.home_advantage_elo
-        elo_diff = self.blended_elo(home_team_id) + hca_elo - self.blended_elo(away_team_id)
+        elo_diff = self.blended_elo(home_team_id) - self.blended_elo(away_team_id)
         elo_margin = elo_diff / self.config.elo_per_point
-        srs_margin = self.srs.expected_margin(home_team_id, away_team_id, is_neutral=is_neutral)
+        srs_margin = self.srs.get_rating(home_team_id) - self.srs.get_rating(away_team_id)
         margin = self.config.elo_blend * elo_margin + self.config.srs_blend * srs_margin
+        if not is_neutral:
+            margin += self.config.home_advantage_points
         if rest is not None:
             margin += rest.margin_adjustment(
                 b2b_penalty=self.config.b2b_penalty,
