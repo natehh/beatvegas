@@ -84,7 +84,13 @@ def ledger_path(root: Optional[Path] = None) -> Path:
 
 
 def get_api_key(explicit: Optional[str] = None) -> str:
-    key = (explicit or os.environ.get("THE_ODDS_API_KEY") or os.environ.get("ODDS_API_KEY") or "").strip()
+    key = (
+        explicit
+        or os.environ.get("THE_ODDS_API_KEY")
+        or os.environ.get("ODDS_API_KEY")
+        or os.environ.get("oddsapi")
+        or ""
+    ).strip()
     if not key:
         raise RuntimeError(
             "Missing THE_ODDS_API_KEY. Get a free key at https://the-odds-api.com/ and export it."

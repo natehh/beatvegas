@@ -87,6 +87,37 @@ python scripts/betting_cli.py --season 2024-25 --public-fade
 Also available via the API: `POST /api/nba/betting` with
 `{ "season": "2024-25", "public_fade": true }` (returns `"strategy": "public_fade"`).
 
+### NBA player props
+
+Honest status: **no historical prop edge can be proven yet — the lines
+don't exist for free** (`scripts/player_props_research.py`). The Odds API
+historical prop prices are behind a paid tier, and no free archive of
+historical player-prop lines was found. What is in place:
+
+- **A validated projection model.** Projected minutes (L10/season blend)
+  × shrunk per-minute rates (season + L10) × pace factor, plus an
+  opponent-defence factor for points, with strictly pregame features
+  built from ESPN gamelogs (46k player-games). On 2025-26 it beat the
+  naive baselines on every stat (PTS MAE 5.32 vs 5.54 season average on
+  rotation players; similar for REB/AST/PRA). That is real but small —
+  far short of clearing −110 on its own.
+- **A simulated-line backtest that is NOT evidence.** Betting the model
+  against pseudo-lines set at the player's own rolling average shows
+  +16% to +53% ROI — which only proves the average is a bad line, not
+  that bookmakers are. Books price in returns, role changes and minutes
+  expectations; the first live snapshot shows their lines already sit
+  2.4 points away from last-season averages on the points market.
+- **Forward collection is running.** `scripts/collect_prop_odds.py`
+  snapshots real book lines and `scripts/settle_prop_odds.py` grades
+  them against ESPN gamelogs. It banked 358 opening-night quotes; the
+  diagnostic shows mild over shading (median −112 over vs −116 under on
+  points) and cross-book dispersion (36/71 props ≥1 point apart across
+  books) — line shopping alone is worth points. After a few hundred
+  settled props, the ledger supports a real model-vs-market verdict.
+- **Shortcut:** an archived-closing-line source (e.g. a free DunkAPI
+  key, which carries lines back to May 2023) turns the same projection
+  model into a true historical backtest immediately.
+
 Caveats: ~875 bets is a modest sample (ROI 95% CI roughly −1% to +11%), Yahoo
 split coverage is 75-100% of games depending on season, and the effect is a
 market-microstructure signal (book shading of popular sides), so it may decay
