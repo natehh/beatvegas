@@ -15,6 +15,7 @@ data/cache/*
 !data/cache/.gitkeep
 data/props/*
 !data/props/.gitkeep
+!data/props/*.jsonl
 *.sqlite3
 .DS_Store
 .coverage

@@ -1,0 +1,87 @@
+name: Daily NBA player props
+
+# Settles yesterday's collected props against ESPN box scores, then snapshots
+# tonight's player-prop lines from The Odds API, and commits both JSONL
+# ledgers back to the repo so the dataset accumulates for future backtests.
+#
+# One-time setup: add a repository secret named THE_ODDS_API_KEY
+# (Settings -> Secrets and variables -> Actions) with a free key from
+# https://the-odds-api.com/ . Settlement needs no key.
+#
+# Credit budget: the collector uses the 3 core markets (points/rebounds/
+# assists) in 1 region = ~3 credits per game. A full regular-season slate
+# (~7 games/night) is ~20 credits/day, which outlasts the 500/month free
+# tier by only ~3 weeks; upgrade the Odds API plan or expect late-month
+# gaps. The pipeline warns when fewer than 50 credits remain.
+
+on:
+  schedule:
+    # 21:00 UTC daily = 5pm ET / 3pm MT: tonight's props are posted,
+    # last night's games finished long ago.
+    - cron: "0 21 * * *"
+  workflow_dispatch:
+    inputs:
+      skip_collect:
+        description: "Settle only, skip the Odds API collection"
+        type: boolean
+        default: false
+      hours_ahead:
+        description: "Collect games tipping within this many hours"
+        type: string
+        default: "18"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: daily-props
+  cancel-in-progress: false
+
+jobs:
+  props:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Settle previous props and collect today's
+        env:
+          THE_ODDS_API_KEY: ${{ secrets.THE_ODDS_API_KEY }}
+        run: |
+          ARGS=""
+          if [ "${{ inputs.skip_collect }}" = "true" ]; then ARGS="--skip-collect"; fi
+          python scripts/daily_prop_pipeline.py \
+            --hours-ahead "${{ inputs.hours_ahead || '18' }}" $ARGS
+
+      - name: Upload raw snapshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: prop-snapshots-${{ github.run_id }}
+          path: data/props/snapshots/
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Commit ledgers
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          for f in data/props/prop_quotes.jsonl data/props/prop_settled.jsonl; do
+            if [ -f "$f" ]; then git add "$f"; fi
+          done
+          if git diff --cached --quiet; then
+            echo "No ledger changes to commit."
+            exit 0
+          fi
+          git commit -m "Daily props: quotes + settlements $(date -u +%F) [skip ci]"
+          git pull --rebase origin "${GITHUB_REF_NAME}"
+          git push origin HEAD:"${GITHUB_REF_NAME}"

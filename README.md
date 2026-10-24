@@ -107,7 +107,23 @@ historical player-prop lines was found. What is in place:
   that bookmakers are. Books price in returns, role changes and minutes
   expectations; the first live snapshot shows their lines already sit
   2.4 points away from last-season averages on the points market.
-- **Forward collection is running.** `scripts/collect_prop_odds.py`
+- **Daily automation.** `.github/workflows/daily-props.yml` runs
+  `scripts/daily_prop_pipeline.py` at 21:00 UTC every day: it settles
+  every previously collected prop whose game finished (ESPN box scores,
+  no key needed — in practice last night's slate), then snapshots
+  tonight's lines for all games tipping in the next 18 hours, and
+  commits `data/props/prop_quotes.jsonl` + `prop_settled.jsonl` back to
+  the repo so the backtest dataset accumulates on its own. One-time
+  setup: add a GitHub repository secret `THE_ODDS_API_KEY` (Settings →
+  Secrets and variables → Actions) with a free key from
+  the-odds-api.com; scheduled workflows only run from the default
+  branch, and the workflow can be triggered by hand from the Actions
+  tab. Credit reality check: the 3 core markets cost ~3 credits per
+  game, so a full slate (~7 games/night) runs ~20 credits/day — the
+  free tier's 500/month lasts roughly three weeks of daily runs, after
+  which either a paid Odds API plan or some skipped days are needed
+  (the pipeline warns below 50 remaining credits).
+- **Forward collection works manually too.** `scripts/collect_prop_odds.py`
   snapshots real book lines and `scripts/settle_prop_odds.py` grades
   them against ESPN gamelogs. It banked 358 opening-night quotes; the
   diagnostic shows mild over shading (median −112 over vs −116 under on
