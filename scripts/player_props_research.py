@@ -74,7 +74,7 @@ LABEL_IDX = {"min": 0, "fg3m": 3, "reb": 7, "ast": 8, "blk": 9, "stl": 10, "pts"
 # 2023-24 is a warm-up season only: it gives 2024-25 a prior-season history
 # (so season-boundary effects can be learned) and a training season for the
 # walk-forward ML layer. Headline evaluation remains 2025-26.
-SEASONS = [(2024, "2023-24"), (2025, "2024-25"), (2026, "2025-26")]
+SEASONS = [(2024, "2023-24"), (2025, "2024-25"), (2026, "2025-26"), (2027, "2026-27")]
 
 _cache_dir = DEFAULT_CACHE
 
@@ -178,7 +178,7 @@ def parse_gamelog(d: dict, athlete: dict, season_label: str) -> list[dict]:
 
 
 def build_logs() -> pd.DataFrame:
-    cache_file = _cache_dir / "gamelogs_v3.pkl"
+    cache_file = _cache_dir / "gamelogs_v4.pkl"
     if cache_file.exists():
         return pd.read_pickle(cache_file)
     athletes = get_athletes()
@@ -383,10 +383,13 @@ def _add_v2_features(df: pd.DataFrame) -> pd.DataFrame:
         )
         league = team_tot.groupby("season")[f"a_{c}"].transform("mean")
         team_tot[f"opp_{c}_factor"] = (prior / league).clip(0.90, 1.10)
+    # team_tot's factor for a team is what that team has *allowed*, i.e.
+    # its defensive tendency -- so a player uses his opponent's row.
     df = df.merge(
         team_tot[["season", "event_id", "team"]
-                 + [f"opp_{c}_factor" for c in ["pts", "reb", "ast", "fg3m"]]],
-        on=["season", "event_id", "team"], how="left",
+                 + [f"opp_{c}_factor" for c in ["pts", "reb", "ast", "fg3m"]]]
+        .rename(columns={"team": "opp"}),
+        on=["season", "event_id", "opp"], how="left",
     )
     for c in ["pts", "reb", "ast", "fg3m"]:
         df[f"opp_{c}_factor"] = df[f"opp_{c}_factor"].fillna(1.0)
@@ -662,8 +665,8 @@ def main() -> None:
     _cache_dir = args.cache_dir
     _cache_dir.mkdir(parents=True, exist_ok=True)
 
-    if args.analyze_only and (_cache_dir / "gamelogs_v3.pkl").exists():
-        df = pd.read_pickle(_cache_dir / "gamelogs_v3.pkl")
+    if args.analyze_only and (_cache_dir / "gamelogs_v4.pkl").exists():
+        df = pd.read_pickle(_cache_dir / "gamelogs_v4.pkl")
     else:
         df = build_logs()
     print(f"gamelog rows: {len(df)}")

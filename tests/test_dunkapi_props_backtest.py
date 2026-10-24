@@ -98,6 +98,14 @@ def test_ev_bets_only_bet_when_probability_beats_price():
     assert mod.ev_bets(graded, min_ev=10_000.0) == []
 
 
+def test_bootstrap_roi_ci_clusters():
+    out = mod.bootstrap_roi_ci([100.0, -100.0, 100.0, -100.0, 50.0, -50.0],
+                               ["a|1", "a|1", "b|2", "b|2", "c|3", "c|3"],
+                               n_boot=50)
+    assert out["n_clusters"] == 3 and out["roi_ci95"][0] <= out["roi_ci95"][1]
+    assert mod.bootstrap_roi_ci([], [])["roi_ci95"] is None
+
+
 def test_grade_joins_on_player_and_event_and_maps_stat():
     consensus = pd.DataFrame([{
         "player_id": "1", "game_id": "401", "game_date": "2025-10-25",

@@ -306,7 +306,7 @@ def _win_profit(odds: float) -> float:
     return 100.0 * (100.0 / abs(odds) if odds < 0 else odds / 100.0)
 
 
-def ev_bets(graded: pd.DataFrame, min_ev: float) -> list[float]:
+def ev_bets(graded: pd.DataFrame, min_ev: float, return_clusters: bool = False):
     """Bets chosen by model-implied win probability vs price.
 
     Actual ~ Normal(proj, resid_sd) (resid_sd fit on the tune season),
@@ -316,10 +316,14 @@ def ev_bets(graded: pd.DataFrame, min_ev: float) -> list[float]:
     turned out to be mostly model error.
     """
     profits: list[float] = []
+    clusters: list[str] = []
     for r in graded.itertuples():
-        if not r.resid_sd or r.resid_sd <= 0:
+        sd = getattr(r, "resid_sd_player", None)
+        if sd is None or (isinstance(sd, float) and pd.isna(sd)):
+            sd = r.resid_sd
+        if not sd or sd <= 0:
             continue
-        p_over = _norm_cdf((r.proj - r.line) / r.resid_sd)
+        p_over = _norm_cdf((r.proj - r.line) / sd)
         ev_over = p_over * _win_profit(r.over_odds) - (1 - p_over) * 100.0
         ev_under = (1 - p_over) * _win_profit(r.under_odds) - p_over * 100.0
         side, ev = ("over", ev_over) if ev_over >= ev_under else ("under", ev_under)
@@ -327,7 +331,8 @@ def ev_bets(graded: pd.DataFrame, min_ev: float) -> list[float]:
             continue
         odds = r.over_odds if side == "over" else r.under_odds
         profits.append(settle_with_odds(r.actual, r.line, side, odds))
-    return profits
+        clusters.append(f"{getattr(r, 'player_id', '')}|{getattr(r, 'game_id', '')}")
+    return (profits, clusters) if return_clusters else profits
 
 
 def _bet_summary(profits: list[float]) -> dict[str, Any]:
@@ -353,6 +358,17 @@ def load_projections(gamelog_cache: Path) -> tuple[pd.DataFrame, dict[str, float
     df = mod.add_ml_projections(mod.add_projections(mod.add_pregame_features(mod.build_logs())))
     tune = df[(df["season"] == "2024-25") & (df["games_prior"] >= 10)]
     sd = {c: float((tune[c] - tune[f"{c}_proj"]).std()) for c in STATS}
+    # Player-specific residual SDs from the tune season, shrunk toward
+    # the pooled SD (20 pseudo-games): stars with stable roles get
+    # tighter distributions than volatile rotation players, which is
+    # what the EV rule's probabilities should reflect.
+    for c in STATS:
+        resid = (tune[c] - tune[f"{c}_proj"]).rename("resid")
+        per = pd.concat([tune["player_id"], resid], axis=1).groupby("player_id")["resid"]
+        stats = per.agg(["count", "std"])
+        shrunk = ((stats["count"] * stats["std"] ** 2 + 20 * sd[c] ** 2)
+                  / (stats["count"] + 20)) ** 0.5
+        df[f"{c}_sigma"] = df["player_id"].map(shrunk).fillna(sd[c])
     return df, sd
 
 
@@ -364,15 +380,49 @@ def grade(consensus: pd.DataFrame, logs: pd.DataFrame, sd: dict[str, float]) -> 
     keep = ["player_id", "event_id", "date", "season", "games_prior", "min_proj"] + STATS + [
         f"{c}_proj" for c in STATS
     ]
+    sigma_cols = [f"{c}_sigma" for c in STATS if f"{c}_sigma" in logs.columns]
     merged = consensus.merge(
-        logs[keep], left_on=["player_id", "game_id"],
+        logs[keep + sigma_cols], left_on=["player_id", "game_id"],
         right_on=["player_id", "event_id"], how="inner",
     )
     merged["actual"] = merged.apply(lambda r: r[r["stat"]], axis=1)
     merged["proj"] = merged.apply(lambda r: r[f"{r['stat']}_proj"], axis=1)
     merged["edge"] = merged["proj"] - merged["line"]
     merged["resid_sd"] = merged["stat"].map(sd)
+    if sigma_cols:
+        merged["resid_sd_player"] = merged.apply(
+            lambda r: r.get(f"{r['stat']}_sigma", r["resid_sd"]), axis=1
+        )
     return merged
+
+
+def bootstrap_roi_ci(
+    profits: Sequence[float], clusters: Sequence[str],
+    n_boot: int = 1000, seed: int = 7,
+) -> dict[str, Any]:
+    """Cluster-bootstrap 95% CI for ROI, resampling player-games.
+
+    Bets on the same player in the same game (5 markets) are highly
+    correlated, so the bet -- not the market row -- is the wrong unit;
+    resampling player-game clusters gives an honest interval.
+    """
+    import numpy as np
+
+    profits_arr = np.asarray(profits, dtype=float)
+    clusters_arr = np.asarray(clusters)
+    uniq = np.unique(clusters_arr)
+    if len(profits_arr) == 0 or len(uniq) < 3:
+        return {"n_boot": 0, "roi_ci95": None}
+    by_cluster = {c: profits_arr[clusters_arr == c] for c in uniq}
+    rng = np.random.default_rng(seed)
+    rois = []
+    for _ in range(n_boot):
+        picked = rng.choice(uniq, size=len(uniq), replace=True)
+        sample = np.concatenate([by_cluster[c] for c in picked])
+        rois.append(sample.sum() / (100 * len(sample)))
+    lo, hi = np.percentile(rois, [2.5, 97.5])
+    return {"n_boot": n_boot, "n_clusters": int(len(uniq)),
+            "roi_ci95": [float(lo), float(hi)]}
 
 
 def summarize(graded: pd.DataFrame) -> dict[str, Any]:
@@ -413,6 +463,18 @@ def summarize(graded: pd.DataFrame) -> dict[str, Any]:
     summary["pooled_ev_bets"] = {
         str(t): _bet_summary(ev_bets(graded, float(t))) for t in (0, 5, 10)
     }
+    k0_profits = [
+        settle_with_odds(r.actual, r.line,
+                         "over" if r.edge > 0 else "under",
+                         r.over_odds if r.edge > 0 else r.under_odds)
+        for r in graded.itertuples()
+    ]
+    k0_clusters = [f"{r.player_id}|{r.game_id}" for r in graded.itertuples()]
+    ev_profits, ev_clusters = ev_bets(graded, 0.0, return_clusters=True)
+    summary["bootstrap"] = {
+        "point_edge_k0": bootstrap_roi_ci(k0_profits, k0_clusters),
+        "ev_ge_0": bootstrap_roi_ci(ev_profits, ev_clusters),
+    }
     return summary
 
 
@@ -449,6 +511,11 @@ def print_report(summary: dict[str, Any], graded: pd.DataFrame, sd: dict[str, fl
         if b["n"]:
             print(f"  all  EV>={t}: n={b['n']:4d} hit={b['hit_rate'] * 100:5.1f}% "
                   f"ROI={b['roi'] * 100:+6.2f}% profit={b['profit_units_100']:+9.0f}")
+    for name, b in summary.get("bootstrap", {}).items():
+        if b.get("roi_ci95"):
+            lo, hi = b["roi_ci95"]
+            print(f"  bootstrap 95% CI ({name}, {b['n_clusters']} player-games): "
+                  f"ROI {lo * 100:+.1f}% to {hi * 100:+.1f}%")
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
