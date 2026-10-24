@@ -13,6 +13,18 @@ don't seem to exist. So this study has three legs:
      genuinely better than season-average / last-10 baselines
      (points MAE 4.83 vs 5.06 / 4.85; PRA 6.32 vs 6.77 / 6.39) — real
      but modest signal, mostly from minutes projection.
+
+     The v2 revision (after the DunkAPI closing-line grade below)
+     keeps that skeleton and adds: a 2023-24 warm-up season, EWMA +
+     current-season features with season-discounted expanding priors,
+     a usage-based points rate (usage/min x points per possession),
+     per-stat opponent factors, rotation-absence and return-from-
+     injury minutes adjustments, and a walk-forward gradient-
+     boosting layer trained only on prior seasons (add_ml_projections,
+     50/50 blend, FG3M excluded). On the 2025-26 rotation subset it
+     improves minutes MAE 4.78 -> 4.47 and points 5.36 -> 5.16
+     versus v1; calibration scaling fit on 2024-25 was tested and
+     rejected (<=0.01 MAE either way).
   2. A SIMULATED-LINE backtest: pseudo-lines set at a player's recent-
      form baseline, betting the model at -110. This produces gaudy
      ROIs (+16% to +40%) and is NOT evidence of a book edge — real
@@ -30,9 +42,13 @@ don't seem to exist. So this study has three legs:
 The honest edge test is the forward one: collect lines daily
 (`python scripts/collect_prop_odds.py --hours-ahead 30`), settle
 (`python scripts/settle_prop_odds.py`), then grade the model against
-actual closing prices. A DunkAPI free key (500 credits/month) would
-also unlock archived closing lines back to May 2023 for a true
-historical backtest.
+actual closing prices. That grade has now been run historically too:
+`scripts/dunkapi_props_backtest.py` uses DunkAPI archived closes
+(back to May 2023) -- v1 lost badly on October 2025 lines, and the
+v2 model above still loses that regime-shift window but beat the
+close on MAE in 4 of 5 stats (and pooled +30% ROI on the EV rule,
+n=42) in a small fresh January 2026 holdout. See that script's
+docstring; neither window is large enough to claim an edge.
 
 Usage:
     python scripts/player_props_research.py            # fetch + evaluate

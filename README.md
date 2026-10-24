@@ -151,9 +151,33 @@ is in place:
   (n=52). Caveat: the opening 11 days are the model's hardest window
   (prior-season priors vs books pricing role changes — Maxey,
   Wembanyama and Dončić all ran far over both), and 34 games is small;
-  but as the first true closing-line grade it shows no edge, exactly
+  but   as the first true closing-line grade it shows no edge, exactly
   as the forward diagnostic hinted. A season-scale verdict needs a
   paid tier or a longer forward ledger.
+- **Model v2 after that grade (mixed, encouraging).** Error
+  decomposition (0 credits, cached data) found: projected minutes
+  were nearly uncorrelated with actuals for starters (oracle-minutes
+  PTS MAE 7.47 would have beaten the close), prior-season priors
+  took ~5 games to catch up (points bias −7.0 → +1.9 across the
+  window), returners from 2+ missed games were over-projected by
+  ~3.6 minutes, and larger model-vs-line gaps were mostly model
+  error. V2 (`player_props_research.py`) adds a 2023-24 warm-up
+  season, EWMA/current-season features with season-discounted
+  priors (×0.25 at boundaries), a usage-based points rate,
+  per-stat opponent factors, rotation-absence/returner adjustments,
+  and a walk-forward GBM layer trained only on prior seasons —
+  full-season rotation MAE improves (minutes 4.78 → 4.47, PTS
+  5.36 → 5.16, PRA 6.73 → 6.53). Regraded on the same October
+  closes it still loses (PTS 9.20 vs 7.75; pooled −26%), but on a
+  **fresh January 2026 holdout** (120 credits; 60 bets, 10 games,
+  6 players) it beat the close on MAE in 4 of 5 stats (PTS 7.63 vs
+  8.17, REB 1.89 vs 2.25, AST 2.47 vs 2.75, PRA 10.10 vs 10.54)
+  with pooled ROI **+8.7%** (point-edge) / **+30.3%** (new
+  probability/EV rule, n=42). Ten games proves nothing on its own —
+  it is consistent with the staleness diagnosis (mid-season, the
+  recency features have caught up) and is a reason to keep
+  collecting, not to bet. FG3M lost in both windows; don't bet it
+  with this model. Cumulative Dunk spend: 489/500 free credits.
 
 Caveats: ~875 bets is a modest sample (ROI 95% CI roughly −1% to +11%), Yahoo
 split coverage is 75-100% of games depending on season, and the effect is a

@@ -38,29 +38,35 @@ closest to the median. Stake 100 units, settled at that book's actual
 American odds for the chosen side. Betting every book separately would
 multiply-count the same opinion.
 
-Results (2025-10-21..2025-10-31, pulled 2026-10-24; 360 credits of
-pulls + 9 of search_players; 1,345 raw rows -> 180 consensus bets over
-34 games / 8 players, median 6-7 books per market)
+Results
 ------------------------------------------------------------------------------
-The closing line beat the model on MAE for every stat (pts 7.75 vs
-8.99, reb 2.47 vs 2.60, ast 1.78 vs 1.89, pra 8.76 vs 11.02, fg3m 1.11
-vs 1.32), and betting the model lost at every edge threshold:
+v1 model, 2025-10-21..10-31 (360 credits + 9 search; 1,345 rows ->
+180 bets, 34 games / 8 players): the close beat the model on MAE for
+every stat and betting it lost at every threshold (pooled ROI -28.0%
+at k=0). That window is the season's hardest -- prior-season priors
+vs books pricing role changes (Maxey, Wembanyama, Doncic).
 
-    k=0.0  n=180 hit=39.4% ROI=-28.0%
-    k=0.3  n= 92 hit=39.1% ROI=-28.6%
-    k=0.5  n= 52 hit=30.8% ROI=-45.1%
+Model v2 (EWMA/current-season + season-discounted priors, usage
+rates, rotation-absence/returner adjustments, per-stat opponent
+factors, walk-forward GBM blend -- see player_props_research.py)
+improved full-season gamelog MAE (2025-26 rotation subset: minutes
+4.78 -> 4.47, pts 5.36 -> 5.16, pra 6.73 -> 6.53) but on the same
+October stars it still loses (pts MAE 9.20 vs line 7.75; pooled
+k=0 ROI -26.2%, EV rule -26.8%): regime shifts dominate there.
 
-The only positive slice (ast, k=0.5: +9.4% on n=11) is noise-scale.
-Caveats: this is the hardest window of the season -- projections lean
-on prior-season rates while books already price role changes (Maxey
-without Embiid/George, Wembanyama's leap, Doncic in LA all ran far
-above both model and line; Jokic opened cold against his). 34 games
-cannot settle the question for a full season, but it is the first
-grade against real closes, and it gives no evidence of an edge:
-consistent with the forward-collected diagnostic, books are not the
-naive baseline the simulated-line backtest beat. Re-running from cache
-(--analyze-only) costs 0 credits; a larger verdict needs either a paid
-tier or a longer forward ledger.
+Fresh holdout, model v2 as shipped, 2026-01-12..01-15 (120 credits;
+441 rows -> 60 bets, 10 games / 6 players; Jokic/Edwards were out):
+the model beat the close on MAE in 4 of 5 stats (pts 7.63 vs 8.17,
+reb 1.89 vs 2.25, ast 2.47 vs 2.75, pra 10.10 vs 10.54; fg3m still
+loses 1.69 vs 1.58) and pooled ROI was +8.7% at k=0 (n=60) and
++30.3% for the EV>=0 rule (n=42). Encouraging and consistent with
+the staleness diagnosis -- mid-season, current-season features have
+caught up -- but 10 games is far too small to claim an edge (and
+both model and line over-projected scoring in that window; relative
+closeness, not clairvoyance, drove the result). FG3M lost in both
+windows and should not be bet with this model. Cumulative Dunk
+spend for both pulls: 489 of the 500 free-tier credits. Re-running
+either window from cache (--analyze-only) costs 0 credits.
 
 Usage:
     export DUNKAPI_API_KEY=...
@@ -122,12 +128,24 @@ class DunkClient:
         self.base_url = base_url
 
     def _post(self, tool: str, body: dict[str, Any]) -> dict[str, Any]:
-        resp = requests.post(
-            f"{self.base_url}/{tool}",
-            headers={"x-api-key": self._key, "Content-Type": "application/json"},
-            json=body,
-            timeout=120,
-        )
+        # DunkAPI drops to 10 req/min once the balance is under 100
+        # credits, and estimate+pull sequences trip it easily; back off
+        # and retry rather than failing a half-finished (half-paid) pull.
+        import time
+
+        resp = None
+        for attempt in range(5):
+            resp = requests.post(
+                f"{self.base_url}/{tool}",
+                headers={"x-api-key": self._key, "Content-Type": "application/json"},
+                json=body,
+                timeout=120,
+            )
+            if resp.status_code != 429:
+                break
+            wait = float(resp.headers.get("Retry-After") or 15 * (attempt + 1))
+            time.sleep(min(wait, 90))
+        assert resp is not None
         resp.raise_for_status()
         payload = resp.json()
         data = payload.get("data", payload)
