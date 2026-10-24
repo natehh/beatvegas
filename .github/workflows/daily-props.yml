@@ -1,18 +1,18 @@
 name: Daily NBA player props
 
 # Settles yesterday's collected props against ESPN box scores, then snapshots
-# tonight's player-prop lines from The Odds API, and commits both JSONL
+# today's player-prop lines from PropLine, and commits both JSONL
 # ledgers back to the repo so the dataset accumulates for future backtests.
 #
-# One-time setup: add a repository secret named THE_ODDS_API_KEY
+# One-time setup: add a repository secret named PROPLINE_API_KEY
 # (Settings -> Secrets and variables -> Actions) with a free key from
-# https://the-odds-api.com/ . Settlement needs no key.
+# https://prop-line.com/#signup . Settlement needs no key.
 #
-# Credit budget: the collector uses the 3 core markets (points/rebounds/
-# assists) in 1 region = ~3 credits per game. A full regular-season slate
-# (~7 games/night) is ~20 credits/day, which outlasts the 500/month free
-# tier by only ~3 weeks; upgrade the Odds API plan or expect late-month
-# gaps. The pipeline warns when fewer than 50 credits remain.
+# Budget: PropLine's free tier is 1,000 requests/day and charges 1 request
+# per event (plus 1 for the event list), so the full 7-market set for a
+# 15-game slate costs ~16 requests/day. The old Odds API source remains
+# available via `--source oddsapi` (secret THE_ODDS_API_KEY); it charges
+# ~3 credits/game for 3 markets from a 500/month budget.
 
 on:
   schedule:
@@ -56,11 +56,11 @@ jobs:
 
       - name: Settle previous props and collect today's
         env:
-          THE_ODDS_API_KEY: ${{ secrets.THE_ODDS_API_KEY }}
+          PROPLINE_API_KEY: ${{ secrets.PROPLINE_API_KEY }}
         run: |
           ARGS=""
           if [ "${{ inputs.skip_collect }}" = "true" ]; then ARGS="--skip-collect"; fi
-          python scripts/daily_prop_pipeline.py \
+          python scripts/daily_prop_pipeline.py --source propline \
             --hours-ahead "${{ inputs.hours_ahead || '24' }}" $ARGS
 
       - name: Upload raw snapshots

@@ -22,8 +22,10 @@ from sports.nba.prop_odds import (  # noqa: E402
 
 def main() -> int:
     p = argparse.ArgumentParser(description="Collect NBA player prop odds (The Odds API)")
+    p.add_argument("--source", choices=("oddsapi", "propline"), default="oddsapi",
+                   help="Odds source (propline needs PROPLINE_API_KEY)")
     p.add_argument("--markets", default=",".join(DEFAULT_MARKETS), help="Comma-separated market keys")
-    p.add_argument("--extended", action="store_true", help="Use extended market set (more credits)")
+    p.add_argument("--extended", action="store_true", help="Use extended market set (more credits on oddsapi)")
     p.add_argument("--regions", default="us")
     p.add_argument("--hours-ahead", type=float, default=36.0)
     p.add_argument("--max-events", type=int, default=None, help="Cap events (credit control)")
@@ -33,8 +35,8 @@ def main() -> int:
 
     if args.dry_run_key_check:
         try:
-            get_api_key()
-            print("THE_ODDS_API_KEY is set.")
+            get_api_key(source=args.source)
+            print(f"API key for source {args.source!r} is set.")
             return 0
         except RuntimeError as exc:
             print(str(exc), file=sys.stderr)
@@ -50,13 +52,14 @@ def main() -> int:
             max_events=args.max_events,
             hours_ahead=args.hours_ahead,
             include_live=not args.no_live,
+            source=args.source,
         )
     except RuntimeError as exc:
         print(str(exc), file=sys.stderr)
         print(
-            "\nSetup: create a free key at https://the-odds-api.com/ then:\n"
-            "  export THE_ODDS_API_KEY=your_key\n"
-            "Free tier ≈ 500 credits/month. Default run ≈ 3 credits × N upcoming games.",
+            "\nSetup: create a free key, then export it:\n"
+            "  export THE_ODDS_API_KEY=your_key   # https://the-odds-api.com/ (500 credits/month)\n"
+            "  export PROPLINE_API_KEY=your_key   # https://prop-line.com/#signup (1,000 requests/day, use --source propline)",
             file=sys.stderr,
         )
         return 2

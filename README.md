@@ -114,16 +114,18 @@ historical player-prop lines was found. What is in place:
   lines for all games tipping in the next 24 hours (today's afternoon
   and evening slate, including weekend matinees), and
   commits `data/props/prop_quotes.jsonl` + `prop_settled.jsonl` back to
-  the repo so the backtest dataset accumulates on its own. One-time
-  setup: add a GitHub repository secret `THE_ODDS_API_KEY` (Settings →
-  Secrets and variables → Actions) with a free key from
-  the-odds-api.com; scheduled workflows only run from the default
-  branch, and the workflow can be triggered by hand from the Actions
-  tab. Credit reality check: the 3 core markets cost ~3 credits per
-  game, so a full slate (~7 games/night) runs ~20 credits/day — the
-  free tier's 500/month lasts roughly three weeks of daily runs, after
-  which either a paid Odds API plan or some skipped days are needed
-  (the pipeline warns below 50 remaining credits).
+  the repo so the backtest dataset accumulates on its own. The odds
+  source is **PropLine** (Odds-API-compatible feed): one-time setup is
+  a GitHub repository secret `PROPLINE_API_KEY` (Settings → Secrets and
+  variables → Actions) with a free key from prop-line.com. PropLine
+  charges per request (1 per game) from a 1,000-requests/day free
+  tier, so the daily job collects the extended 7-market set
+  (points/rebounds/assists/threes/PRA/blocks/steals) for ~16 requests
+  on a full slate. The old Odds API source remains available with
+  `--source oddsapi` (secret `THE_ODDS_API_KEY`); it charges per
+  market (~3 credits/game, 500/month free), so it stays on the 3 core
+  markets. Scheduled workflows only run from the default branch, and
+  the workflow can be triggered by hand from the Actions tab.
 - **Forward collection works manually too.** `scripts/collect_prop_odds.py`
   snapshots real book lines and `scripts/settle_prop_odds.py` grades
   them against ESPN gamelogs. It banked 358 opening-night quotes; the

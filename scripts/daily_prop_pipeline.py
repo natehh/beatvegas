@@ -8,7 +8,8 @@ Run order matters for a clean ledger:
    (free, no key). Idempotent: already-settled quotes are skipped, so this
    safely covers "everything that settled since the last run", i.e. last
    night's games on a daily cadence.
-2. **Collect** — snapshot The Odds API player props for games tipping off in
+2. **Collect** — snapshot player props (PropLine by default; The Odds API
+   with ``--source oddsapi``) for games tipping off in
    the next ``--hours-ahead`` hours (not yet live). With the default 24h
    window and a 15:00 UTC (9am MT) run, that covers today's afternoon and
    evening slate, including weekend matinees.
@@ -36,7 +37,11 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from sports.nba.prop_odds import DEFAULT_MARKETS, collect_prop_odds  # noqa: E402
+from sports.nba.prop_odds import (  # noqa: E402
+    DEFAULT_MARKETS,
+    EXTENDED_MARKETS,
+    collect_prop_odds,
+)
 from sports.nba.prop_settle import settle_prop_quotes  # noqa: E402
 
 
@@ -44,13 +49,21 @@ def run_pipeline(
     *,
     hours_ahead: float = 24.0,
     finished_hours: float = 3.0,
-    markets: Sequence[str] = DEFAULT_MARKETS,
+    markets: Optional[Sequence[str]] = None,
     regions: str = "us",
+    source: str = "propline",
     max_events: Optional[int] = None,
     skip_settle: bool = False,
     skip_collect: bool = False,
 ) -> tuple[dict[str, Any], int]:
-    """Run settle-then-collect; return (summary, exit_code)."""
+    """Run settle-then-collect; return (summary, exit_code).
+
+    Default markets depend on the source: PropLine charges per request, so
+    it gets the extended 7-market set; The Odds API charges per market, so
+    it stays on the 3 core markets.
+    """
+    if markets is None:
+        markets = EXTENDED_MARKETS if source == "propline" else DEFAULT_MARKETS
     summary: dict[str, Any] = {"settle": None, "collect": None}
     exit_code = 0
 
@@ -73,11 +86,12 @@ def run_pipeline(
                 max_events=max_events,
                 hours_ahead=hours_ahead,
                 include_live=False,
+                source=source,
             )
             collect_summary = asdict(result)
             collect_summary["ledger_path"] = str(result.ledger_path)
             remaining = result.credits_remaining
-            if remaining is not None and remaining < 50:
+            if source == "oddsapi" and remaining is not None and remaining < 50:
                 collect_summary["warning"] = (
                     f"Only {remaining} Odds API credits remain; the free tier "
                     "(500/month) will not cover a full daily slate for long."
@@ -96,20 +110,25 @@ def main() -> int:
                    help="Collect games tipping within this window (default 24 = today + early tomorrow)")
     p.add_argument("--finished-hours", type=float, default=3.0,
                    help="Settle games that tipped at least this many hours ago")
-    p.add_argument("--markets", default=",".join(DEFAULT_MARKETS),
-                   help="Comma-separated Odds API market keys")
+    p.add_argument("--source", choices=("propline", "oddsapi"), default="propline",
+                   help="Odds source (default propline; oddsapi = The Odds API)")
+    p.add_argument("--markets", default=None,
+                   help="Comma-separated market keys (default: extended for propline, core for oddsapi)")
     p.add_argument("--regions", default="us")
     p.add_argument("--max-events", type=int, default=None, help="Cap events (credit control)")
     p.add_argument("--skip-settle", action="store_true")
     p.add_argument("--skip-collect", action="store_true")
     args = p.parse_args()
 
-    markets = tuple(m.strip() for m in args.markets.split(",") if m.strip())
+    markets = None
+    if args.markets:
+        markets = tuple(m.strip() for m in args.markets.split(",") if m.strip())
     summary, exit_code = run_pipeline(
         hours_ahead=args.hours_ahead,
         finished_hours=args.finished_hours,
         markets=markets,
         regions=args.regions,
+        source=args.source,
         max_events=args.max_events,
         skip_settle=args.skip_settle,
         skip_collect=args.skip_collect,

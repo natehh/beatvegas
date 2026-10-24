@@ -1,8 +1,16 @@
-"""Forward collector for NBA player-prop odds via The Odds API.
+"""Forward collector for NBA player-prop odds (The Odds API or PropLine).
 
-Requires env THE_ODDS_API_KEY (free tier works for *upcoming* event props;
-historical props are paid-only). Snapshots append to a JSONL ledger under
-data/props/ for later settlement and backtests.
+Sources:
+- ``oddsapi`` (default): The Odds API. Requires env THE_ODDS_API_KEY (free
+  tier works for *upcoming* event props; historical props are paid-only).
+  Costs markets x regions credits per event from a 500/month free budget.
+- ``propline``: PropLine (api.prop-line.com), an Odds-API-compatible feed.
+  Requires env PROPLINE_API_KEY (free tier: 1,000 requests/day). Same JSON
+  shape, charged per request instead of per market, so full-market daily
+  collection fits the free tier.
+
+Snapshots append to a JSONL ledger under data/props/ for later settlement
+and backtests.
 """
 
 from __future__ import annotations
@@ -21,6 +29,8 @@ from sports.nba.teams import TEAM_NAME_TO_ABBR, normalize_abbr
 DEFAULT_PROPS_DIR = Path(__file__).resolve().parents[2] / "data" / "props"
 SPORT_KEY = "basketball_nba"
 API_BASE = "https://api.the-odds-api.com/v4"
+PROPLINE_BASE = "https://api.prop-line.com/v1"
+SOURCES = ("oddsapi", "propline")
 
 # Core markets: 3 markets × 1 region ≈ 3 credits per event on free tier.
 DEFAULT_MARKETS = (
@@ -83,7 +93,14 @@ def ledger_path(root: Optional[Path] = None) -> Path:
     return props_dir(root) / "prop_quotes.jsonl"
 
 
-def get_api_key(explicit: Optional[str] = None) -> str:
+def get_api_key(explicit: Optional[str] = None, source: str = "oddsapi") -> str:
+    if source == "propline":
+        key = (explicit or os.environ.get("PROPLINE_API_KEY") or "").strip()
+        if not key:
+            raise RuntimeError(
+                "Missing PROPLINE_API_KEY. Get a free key at https://prop-line.com/#signup and export it."
+            )
+        return key
     key = (
         explicit
         or os.environ.get("THE_ODDS_API_KEY")
@@ -96,6 +113,14 @@ def get_api_key(explicit: Optional[str] = None) -> str:
             "Missing THE_ODDS_API_KEY. Get a free key at https://the-odds-api.com/ and export it."
         )
     return key
+
+
+def _source_base(source: str) -> str:
+    if source == "propline":
+        return PROPLINE_BASE
+    if source == "oddsapi":
+        return API_BASE
+    raise ValueError(f"Unknown odds source {source!r}; expected one of {SOURCES}")
 
 
 def season_from_commence(commence_time: str) -> str:
@@ -136,10 +161,14 @@ def _headers_usage(resp: requests.Response) -> dict[str, Optional[int]]:
 def list_nba_events(
     api_key: str,
     *,
+    source: str = "oddsapi",
     timeout: float = 30.0,
 ) -> tuple[list[dict[str, Any]], dict[str, Optional[int]]]:
-    url = f"{API_BASE}/sports/{SPORT_KEY}/events"
-    resp = requests.get(url, params={"apiKey": api_key}, timeout=timeout)
+    url = f"{_source_base(source)}/sports/{SPORT_KEY}/events"
+    if source == "propline":
+        resp = requests.get(url, headers={"X-API-Key": api_key}, timeout=timeout)
+    else:
+        resp = requests.get(url, params={"apiKey": api_key}, timeout=timeout)
     resp.raise_for_status()
     return resp.json(), _headers_usage(resp)
 
@@ -150,20 +179,31 @@ def fetch_event_props(
     *,
     markets: Sequence[str] = DEFAULT_MARKETS,
     regions: str = "us",
+    source: str = "oddsapi",
     timeout: float = 45.0,
 ) -> tuple[dict[str, Any], dict[str, Optional[int]]]:
-    url = f"{API_BASE}/sports/{SPORT_KEY}/events/{event_id}/odds"
-    resp = requests.get(
-        url,
-        params={
-            "apiKey": api_key,
-            "regions": regions,
-            "markets": ",".join(markets),
-            "oddsFormat": "american",
-            "dateFormat": "iso",
-        },
-        timeout=timeout,
-    )
+    url = f"{_source_base(source)}/sports/{SPORT_KEY}/events/{event_id}/odds"
+    if source == "propline":
+        # PropLine is Odds-API-shaped but authenticates by header and
+        # charges per request; regions/oddsFormat params don't apply.
+        resp = requests.get(
+            url,
+            headers={"X-API-Key": api_key},
+            params={"markets": ",".join(markets)},
+            timeout=timeout,
+        )
+    else:
+        resp = requests.get(
+            url,
+            params={
+                "apiKey": api_key,
+                "regions": regions,
+                "markets": ",".join(markets),
+                "oddsFormat": "american",
+                "dateFormat": "iso",
+            },
+            timeout=timeout,
+        )
     resp.raise_for_status()
     return resp.json(), _headers_usage(resp)
 
@@ -172,6 +212,7 @@ def flatten_event_quotes(
     event_payload: dict[str, Any],
     *,
     snapshot_at: str,
+    source: str = "the-odds-api",
 ) -> list[PropQuote]:
     event_id = str(event_payload.get("id", ""))
     commence = str(event_payload.get("commence_time", ""))
@@ -225,6 +266,7 @@ def flatten_event_quotes(
                         over_odds=prices["over"],
                         under_odds=prices["under"],
                         season=season,
+                        source=source,
                     )
                 )
     return quotes
@@ -261,19 +303,22 @@ def collect_prop_odds(
     max_events: Optional[int] = None,
     hours_ahead: float = 36.0,
     include_live: bool = True,
+    source: str = "oddsapi",
     root: Optional[Path] = None,
 ) -> CollectResult:
     """
     Snapshot upcoming (and optionally live) NBA player props into the JSONL ledger.
 
-    Credit tip (free tier ≈ 500/month): events list is cheap; each event costs
-    roughly (#markets returned) × (#regions). Default 3 markets × us ≈ 3 credits/event.
+    Odds API credit tip (free tier ≈ 500/month): events list is cheap; each
+    event costs roughly (#markets) × (#regions). Default 3 markets × us
+    ≈ 3 credits/event. PropLine instead charges 1 request per event from a
+    1,000/day free budget, so ``source="propline"`` can use more markets.
     """
-    key = get_api_key(api_key)
+    key = get_api_key(api_key, source=source)
     now = datetime.now(timezone.utc)
     snapshot_at = now.replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
-    events, usage_events = list_nba_events(key)
+    events, usage_events = list_nba_events(key, source=source)
     selected: list[dict[str, Any]] = []
     for ev in events:
         commence = ev.get("commence_time")
@@ -304,18 +349,24 @@ def collect_prop_odds(
 
     for ev in selected:
         eid = str(ev["id"])
-        payload, usage = fetch_event_props(key, eid, markets=markets, regions=regions)
+        payload, usage = fetch_event_props(
+            key, eid, markets=markets, regions=regions, source=source
+        )
         remaining = usage.get("remaining", remaining)
         used = usage.get("used", used)
         last = usage.get("last", last)
         (raw_dir / f"{eid}.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
-        all_quotes.extend(flatten_event_quotes(payload, snapshot_at=snapshot_at))
+        quote_source = "propline" if source == "propline" else "the-odds-api"
+        all_quotes.extend(
+            flatten_event_quotes(payload, snapshot_at=snapshot_at, source=quote_source)
+        )
 
     path = append_quotes(all_quotes, ledger_path(root))
     meta = {
         "snapshot_at": snapshot_at,
         "n_events": len(selected),
         "n_quotes": len(all_quotes),
+        "source": source,
         "markets": list(markets),
         "regions": regions,
         "credits_remaining": remaining,
