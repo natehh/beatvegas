@@ -187,13 +187,13 @@ def _norm_cdf(x: float) -> float:
 def add_ev(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     def row_ev(r) -> tuple[str, float]:
-        if not r["resid_sd"] or pd.isna(r["resid_sd"]):
+        if not r.resid_sd or pd.isna(r.resid_sd):
             return "", float("nan")
-        p = _norm_cdf((r["proj"] - r["line"]) / r["resid_sd"])
+        p = _norm_cdf((r.proj - r.line) / r.resid_sd)
         def profit(odds):
             return 100.0 * (100.0 / abs(odds) if odds < 0 else odds / 100.0)
-        ev_o = p * profit(r["over_odds"]) - (1 - p) * 100.0
-        ev_u = (1 - p) * profit(r["under_odds"]) - p * 100.0
+        ev_o = p * profit(r.over_odds) - (1 - p) * 100.0
+        ev_u = (1 - p) * profit(r.under_odds) - p * 100.0
         return ("over", ev_o) if ev_o >= ev_u else ("under", ev_u)
     evs = [row_ev(r) for r in df.itertuples()]
     df["side"] = [e[0] for e in evs]
