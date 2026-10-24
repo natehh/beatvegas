@@ -50,23 +50,26 @@ Model v2 (EWMA/current-season + season-discounted priors, usage
 rates, rotation-absence/returner adjustments, per-stat opponent
 factors, walk-forward GBM blend -- see player_props_research.py)
 improved full-season gamelog MAE (2025-26 rotation subset: minutes
-4.78 -> 4.47, pts 5.36 -> 5.16, pra 6.73 -> 6.53) but on the same
+4.78 -> 4.47, pts 5.36 -> 5.17, pra 6.73 -> 6.53) but on the same
 October stars it still loses (pts MAE 9.20 vs line 7.75; pooled
 k=0 ROI -26.2%, EV rule -26.8%): regime shifts dominate there.
 
 Fresh holdout, model v2 as shipped, 2026-01-12..01-15 (120 credits;
 441 rows -> 60 bets, 10 games / 6 players; Jokic/Edwards were out):
-the model beat the close on MAE in 4 of 5 stats (pts 7.63 vs 8.17,
-reb 1.89 vs 2.25, ast 2.47 vs 2.75, pra 10.10 vs 10.54; fg3m still
-loses 1.69 vs 1.58) and pooled ROI was +8.7% at k=0 (n=60) and
-+30.3% for the EV>=0 rule (n=42). Encouraging and consistent with
-the staleness diagnosis -- mid-season, current-season features have
-caught up -- but 10 games is far too small to claim an edge (and
-both model and line over-projected scoring in that window; relative
-closeness, not clairvoyance, drove the result). FG3M lost in both
-windows and should not be bet with this model. Cumulative Dunk
-spend for both pulls: 489 of the 500 free-tier credits. Re-running
-either window from cache (--analyze-only) costs 0 credits.
+the model beat the close on MAE in 4 of 5 stats (pts 7.71 vs 8.17,
+reb 1.88 vs 2.25, ast 2.40 vs 2.75, pra 10.13 vs 10.54; fg3m still
+loses 1.69 vs 1.58) and pooled ROI was +12.5% at k=0 (n=60) and
++29.6% for the EV>=0 rule (n=38; player-specific shrunk residual
+SDs). Cluster-bootstrap 95% CIs (resampling player-games; printed
+by the script) are decisive in October (k=0 ROI -43.5% to -12.8%)
+but merely encouraging in January (EV rule +14.9% to +44.7% on
+only 12 player-games -- and conditional on EV selection, so the
+true interval is wider). Both model and line over-projected
+scoring in the January window; relative closeness, not
+clairvoyance, drove the result. FG3M lost in both windows and
+should not be bet with this model. Cumulative Dunk spend for both
+pulls: 489 of the 500 free-tier credits. Re-running either window
+from cache (--analyze-only) costs 0 credits.
 
 Usage:
     export DUNKAPI_API_KEY=...

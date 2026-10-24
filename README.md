@@ -166,18 +166,34 @@ is in place:
   priors (×0.25 at boundaries), a usage-based points rate,
   per-stat opponent factors, rotation-absence/returner adjustments,
   and a walk-forward GBM layer trained only on prior seasons —
-  full-season rotation MAE improves (minutes 4.78 → 4.47, PTS
-  5.36 → 5.16, PRA 6.73 → 6.53). Regraded on the same October
-  closes it still loses (PTS 9.20 vs 7.75; pooled −26%), but on a
+  full-season rotation MAE improves (minutes 4.78 → 4.47, PTS 5.36 → 5.17, PRA 6.73 → 6.53). Regraded on the same October
+  closes it still loses (PTS 9.30 vs 7.75; pooled −28.5%, cluster-
+  bootstrap 95% CI −43.5% to −12.8% over 36 player-games), but on a
   **fresh January 2026 holdout** (120 credits; 60 bets, 10 games,
-  6 players) it beat the close on MAE in 4 of 5 stats (PTS 7.63 vs
-  8.17, REB 1.89 vs 2.25, AST 2.47 vs 2.75, PRA 10.10 vs 10.54)
-  with pooled ROI **+8.7%** (point-edge) / **+30.3%** (new
-  probability/EV rule, n=42). Ten games proves nothing on its own —
+  6 players) it beat the close on MAE in 4 of 5 stats (PTS 7.71 vs
+  8.17, REB 1.88 vs 2.25, AST 2.40 vs 2.75, PRA 10.13 vs 10.54)
+  with pooled ROI **+12.5%** (point-edge) / **+29.6%** (probability/
+  EV rule with player-specific shrunk residual SDs, n=38; bootstrap
+  CI +14.9% to +44.7% on just 12 player-games, conditional on
+  selection so really wider). Ten games proves nothing on its own —
   it is consistent with the staleness diagnosis (mid-season, the
   recency features have caught up) and is a reason to keep
   collecting, not to bet. FG3M lost in both windows; don't bet it
   with this model. Cumulative Dunk spend: 489/500 free credits.
+- **Forward test, pre-registered.** The model now covers 2026-27
+  (`grade_forward_props.py` projects future games via synthetic
+  next-game rows). Picks for the 2026-10-24 slate (180 consensus
+  props, 62 players) were generated and committed *before* tip-off
+  (`data/forward_picks_2026-10-24.csv`, 20:03 UTC vs 22:10 UTC
+  first tip); settle them free with `scripts/settle_prop_odds.py`
+  and grade with `grade_forward_props.py --grade`. Locked
+  hypothesis for the forward sample: assists under the EV rule is
+  the only market allowed to be called promising (sole positive
+  market, +13% on n=48, across both Dunk windows combined);
+  everything else is exploratory. An opponent-factor direction
+  bug found in review (factors were merged on the player's own
+  team, not the opponent) is fixed and verified in all 8
+  season/stat cells.
 
 Caveats: ~875 bets is a modest sample (ROI 95% CI roughly −1% to +11%), Yahoo
 split coverage is 75-100% of games depending on season, and the effect is a
