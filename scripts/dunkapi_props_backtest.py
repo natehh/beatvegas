@@ -278,6 +278,50 @@ def settle_with_odds(actual: float, line: float, side: str, odds: float) -> floa
     return 100.0 * (100.0 / abs(odds) if odds < 0 else odds / 100.0)
 
 
+def _norm_cdf(x: float) -> float:
+    import math
+
+    return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
+
+
+def _win_profit(odds: float) -> float:
+    return 100.0 * (100.0 / abs(odds) if odds < 0 else odds / 100.0)
+
+
+def ev_bets(graded: pd.DataFrame, min_ev: float) -> list[float]:
+    """Bets chosen by model-implied win probability vs price.
+
+    Actual ~ Normal(proj, resid_sd) (resid_sd fit on the tune season),
+    so P(over) = Phi((proj - line) / sd). A side is bet only when its
+    expected profit per 100 staked is at least ``min_ev``. This replaces
+    the raw point-edge rule, under which larger model-vs-line gaps
+    turned out to be mostly model error.
+    """
+    profits: list[float] = []
+    for r in graded.itertuples():
+        if not r.resid_sd or r.resid_sd <= 0:
+            continue
+        p_over = _norm_cdf((r.proj - r.line) / r.resid_sd)
+        ev_over = p_over * _win_profit(r.over_odds) - (1 - p_over) * 100.0
+        ev_under = (1 - p_over) * _win_profit(r.under_odds) - p_over * 100.0
+        side, ev = ("over", ev_over) if ev_over >= ev_under else ("under", ev_under)
+        if ev < min_ev:
+            continue
+        odds = r.over_odds if side == "over" else r.under_odds
+        profits.append(settle_with_odds(r.actual, r.line, side, odds))
+    return profits
+
+
+def _bet_summary(profits: list[float]) -> dict[str, Any]:
+    return {
+        "n": int(len(profits)),
+        "hit_rate": (float(sum(1 for p in profits if p > 0) / len(profits))
+                     if profits else None),
+        "roi": (float(sum(profits) / (100 * len(profits))) if profits else None),
+        "profit_units_100": float(sum(profits)),
+    }
+
+
 def load_projections(gamelog_cache: Path) -> tuple[pd.DataFrame, dict[str, float]]:
     """Build strictly-pregame projections with the research model."""
     spec = importlib.util.spec_from_file_location(
@@ -288,7 +332,7 @@ def load_projections(gamelog_cache: Path) -> tuple[pd.DataFrame, dict[str, float
     spec.loader.exec_module(mod)
     mod._cache_dir = gamelog_cache
     gamelog_cache.mkdir(parents=True, exist_ok=True)
-    df = mod.add_projections(mod.add_pregame_features(mod.build_logs()))
+    df = mod.add_ml_projections(mod.add_projections(mod.add_pregame_features(mod.build_logs())))
     tune = df[(df["season"] == "2024-25") & (df["games_prior"] >= 10)]
     sd = {c: float((tune[c] - tune[f"{c}_proj"]).std()) for c in STATS}
     return df, sd
@@ -332,13 +376,10 @@ def summarize(graded: pd.DataFrame) -> dict[str, Any]:
                                  r.over_odds if r.edge > 0 else r.under_odds)
                 for r in bets.itertuples()
             ]
-            entry["bets"][str(k)] = {
-                "n": int(len(profits)),
-                "hit_rate": (float(sum(1 for p in profits if p > 0) / len(profits))
-                             if profits else None),
-                "roi": (float(sum(profits) / (100 * len(profits))) if profits else None),
-                "profit_units_100": float(sum(profits)),
-            }
+            entry["bets"][str(k)] = _bet_summary(profits)
+        entry["ev_bets"] = {
+            str(t): _bet_summary(ev_bets(grp, float(t))) for t in (0, 5, 10)
+        }
         summary["by_stat"][stat] = entry
     pooled: dict[str, Any] = {}
     for k in (0.0, 0.3, 0.5):
@@ -349,14 +390,11 @@ def summarize(graded: pd.DataFrame) -> dict[str, Any]:
                              r.over_odds if r.edge > 0 else r.under_odds)
             for r in bets.itertuples()
         ]
-        pooled[str(k)] = {
-            "n": int(len(profits)),
-            "hit_rate": (float(sum(1 for p in profits if p > 0) / len(profits))
-                         if profits else None),
-            "roi": (float(sum(profits) / (100 * len(profits))) if profits else None),
-            "profit_units_100": float(sum(profits)),
-        }
+        pooled[str(k)] = _bet_summary(profits)
     summary["pooled_bets"] = pooled
+    summary["pooled_ev_bets"] = {
+        str(t): _bet_summary(ev_bets(graded, float(t))) for t in (0, 5, 10)
+    }
     return summary
 
 
@@ -382,6 +420,16 @@ def print_report(summary: dict[str, Any], graded: pd.DataFrame, sd: dict[str, fl
     for k, b in summary["pooled_bets"].items():
         if b["n"]:
             print(f"  all  k={k}: n={b['n']:4d} hit={b['hit_rate'] * 100:5.1f}% "
+                  f"ROI={b['roi'] * 100:+6.2f}% profit={b['profit_units_100']:+9.0f}")
+    print("\nprobability/EV rule (Normal CDF on tune-season residual SD):")
+    for stat, e in sorted(summary["by_stat"].items()):
+        for t, b in e["ev_bets"].items():
+            if b["n"]:
+                print(f"  {stat:4s} EV>={t}: n={b['n']:4d} hit={b['hit_rate'] * 100:5.1f}% "
+                      f"ROI={b['roi'] * 100:+6.2f}% profit={b['profit_units_100']:+9.0f}")
+    for t, b in summary["pooled_ev_bets"].items():
+        if b["n"]:
+            print(f"  all  EV>={t}: n={b['n']:4d} hit={b['hit_rate'] * 100:5.1f}% "
                   f"ROI={b['roi'] * 100:+6.2f}% profit={b['profit_units_100']:+9.0f}")
 
 

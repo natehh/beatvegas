@@ -84,6 +84,20 @@ def test_fetch_props_cache_hit_costs_zero(tmp_path):
     assert rows == []
 
 
+def test_ev_bets_only_bet_when_probability_beats_price():
+    graded = pd.DataFrame([
+        # proj far above line at -110: model says over is +EV, and it hits
+        {"actual": 30.0, "line": 20.5, "proj": 28.0, "resid_sd": 5.0,
+         "over_odds": -110, "under_odds": -110},
+        # proj == line at -110 both sides: no +EV side, never bet
+        {"actual": 30.0, "line": 20.5, "proj": 20.5, "resid_sd": 5.0,
+         "over_odds": -110, "under_odds": -110},
+    ])
+    profits = mod.ev_bets(graded, min_ev=0.0)
+    assert len(profits) == 1 and profits[0] > 0
+    assert mod.ev_bets(graded, min_ev=10_000.0) == []
+
+
 def test_grade_joins_on_player_and_event_and_maps_stat():
     consensus = pd.DataFrame([{
         "player_id": "1", "game_id": "401", "game_date": "2025-10-25",

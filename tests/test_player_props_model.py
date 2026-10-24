@@ -74,6 +74,7 @@ def test_parse_gamelog_regular_season_only():
     r = rows[0]
     assert r["pts"] == 20.0 and r["reb"] == 6.0 and r["ast"] == 5.0
     assert r["fg3m"] == 2.0 and r["min"] == 30.0
+    assert r["fga"] == 9.0 and r["fg3a"] == 4.0 and r["fta"] == 4.0 and r["tov"] == 1.0
     assert r["game_total"] == 210.0
     assert r["team"] == "OKC" and r["opp"] == "SA"
 
@@ -98,5 +99,18 @@ def test_pregame_features_use_only_prior_games():
     assert df.loc[3, "pts_season_prior"] == pytest.approx(20.0)
     assert df.loc[0, "games_prior"] == 0
     df2 = mod.add_projections(df)
-    # projection for game 3 comes only from games 1-2 (rates are constant here)
-    assert df2.loc[2, "pts_proj"] == pytest.approx(15.0, abs=1.5)
+    # projection for game 3 comes only from games 1-2 (rates are constant
+    # here; v2's opponent factor, built from this toy's one-player team
+    # totals, is the only thing pulling it off 15)
+    assert df2.loc[2, "pts_proj"] == pytest.approx(15.0, abs=2.0)
+    # v2 feature block is populated and pregame
+    assert df.loc[2, "min_ewm3"] == pytest.approx(30.0)
+    assert df.loc[0, "games_prior"] == 0 and df.loc[2, "own_missed_games"] == 0
+
+
+def test_ml_projections_fallback_without_prior_season():
+    df = mod.add_projections(mod.add_pregame_features(_toy_logs()))
+    out = mod.add_ml_projections(df)
+    # single-season toy: no prior-season training data, heuristic kept
+    assert (out["pts_proj"].fillna(-1) == out["pts_proj_heur"].fillna(-1)).all()
+    assert (out["min_proj"].fillna(-1) == out["min_proj_heur"].fillna(-1)).all()
