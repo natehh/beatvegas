@@ -89,10 +89,12 @@ Also available via the API: `POST /api/nba/betting` with
 
 ### NBA player props
 
-Honest status: **no historical prop edge can be proven yet — the lines
-don't exist for free** (`scripts/player_props_research.py`). The Odds API
-historical prop prices are behind a paid tier, and no free archive of
-historical player-prop lines was found. What is in place:
+Honest status: **the model has now been graded against real historical
+closing lines (via DunkAPI) and lost** — see the DunkAPI bullet below
+(`scripts/player_props_research.py`, `scripts/dunkapi_props_backtest.py`).
+The Odds API historical prop prices are behind a paid tier, but DunkAPI's
+archive (back to May 2023) supplies closes on a free credit budget. What
+is in place:
 
 - **A validated projection model.** Projected minutes (L10/season blend)
   × shrunk per-minute rates (season + L10) × pace factor, plus an
@@ -130,9 +132,28 @@ historical player-prop lines was found. What is in place:
   points) and cross-book dispersion (36/71 props ≥1 point apart across
   books) — line shopping alone is worth points. After a few hundred
   settled props, the ledger supports a real model-vs-market verdict.
-- **Shortcut:** an archived-closing-line source (e.g. a free DunkAPI
-  key, which carries lines back to May 2023) turns the same projection
-  model into a true historical backtest immediately.
+- **DunkAPI historical backtest (done, negative).**
+  `scripts/dunkapi_props_backtest.py` grades the model against archived
+  closing lines (DunkAPI, from May 2023). Credit reality check:
+  `estimate_only` (free) shows the player+date-range form is metered at
+  10 credits *per game returned* despite the 10/call headline — a full
+  season for one star estimates at 640–730 credits, over the 500/month
+  free tier. So the script estimates first, enforces a 400-credit
+  budget, pulls by player + date range, and caches raw responses
+  (re-runs: 0 credits). Sample spent: 360 credits of pulls + 9 of
+  `search_players` for 8 high-minute starters over 2025-10-21..10-31
+  (1,345 rows → 180 consensus player-game-markets, 34 games; one bet
+  per market at the median close, settled at real book odds;
+  thresholds sized on free 2024-25 gamelog residuals). The close beat
+  the model on MAE for **every** stat (PTS 7.75 vs 8.99, PRA 8.76 vs
+  11.02, REB/AST/FG3M likewise), and betting the model returned
+  **−28.0% ROI (n=180)**, −28.6% at k=0.3 (n=92), −45.1% at k=0.5
+  (n=52). Caveat: the opening 11 days are the model's hardest window
+  (prior-season priors vs books pricing role changes — Maxey,
+  Wembanyama and Dončić all ran far over both), and 34 games is small;
+  but as the first true closing-line grade it shows no edge, exactly
+  as the forward diagnostic hinted. A season-scale verdict needs a
+  paid tier or a longer forward ledger.
 
 Caveats: ~875 bets is a modest sample (ROI 95% CI roughly −1% to +11%), Yahoo
 split coverage is 75-100% of games depending on season, and the effect is a

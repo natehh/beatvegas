@@ -38,6 +38,30 @@ closest to the median. Stake 100 units, settled at that book's actual
 American odds for the chosen side. Betting every book separately would
 multiply-count the same opinion.
 
+Results (2025-10-21..2025-10-31, pulled 2026-10-24; 360 credits of
+pulls + 9 of search_players; 1,345 raw rows -> 180 consensus bets over
+34 games / 8 players, median 6-7 books per market)
+------------------------------------------------------------------------------
+The closing line beat the model on MAE for every stat (pts 7.75 vs
+8.99, reb 2.47 vs 2.60, ast 1.78 vs 1.89, pra 8.76 vs 11.02, fg3m 1.11
+vs 1.32), and betting the model lost at every edge threshold:
+
+    k=0.0  n=180 hit=39.4% ROI=-28.0%
+    k=0.3  n= 92 hit=39.1% ROI=-28.6%
+    k=0.5  n= 52 hit=30.8% ROI=-45.1%
+
+The only positive slice (ast, k=0.5: +9.4% on n=11) is noise-scale.
+Caveats: this is the hardest window of the season -- projections lean
+on prior-season rates while books already price role changes (Maxey
+without Embiid/George, Wembanyama's leap, Doncic in LA all ran far
+above both model and line; Jokic opened cold against his). 34 games
+cannot settle the question for a full season, but it is the first
+grade against real closes, and it gives no evidence of an edge:
+consistent with the forward-collected diagnostic, books are not the
+naive baseline the simulated-line backtest beat. Re-running from cache
+(--analyze-only) costs 0 credits; a larger verdict needs either a paid
+tier or a longer forward ledger.
+
 Usage:
     export DUNKAPI_API_KEY=...
     python scripts/dunkapi_props_backtest.py --estimate-only
