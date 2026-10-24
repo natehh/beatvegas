@@ -51,6 +51,8 @@ def test_pipeline_settles_then_collects_tonight(monkeypatch):
     collect_kwargs = calls[1][1]
     assert collect_kwargs["include_live"] is False
     assert collect_kwargs["hours_ahead"] == 24.0
+    assert collect_kwargs["source"] == "propline"  # default source
+    assert collect_kwargs["markets"] == mod.EXTENDED_MARKETS  # per-request pricing
     assert summary["settle"]["n_settled"] == 12
     assert summary["collect"]["n_quotes"] == 900
     assert "warning" not in summary["collect"]
@@ -59,9 +61,10 @@ def test_pipeline_settles_then_collects_tonight(monkeypatch):
 def test_pipeline_warns_on_low_credits(monkeypatch):
     calls = []
     _install_fakes(monkeypatch, calls, collect_credits=20)
-    summary, code = mod.run_pipeline()
+    summary, code = mod.run_pipeline(source="oddsapi")
     assert code == 0
     assert "warning" in summary["collect"]
+    assert calls[1][1]["markets"] == mod.DEFAULT_MARKETS  # per-market pricing
 
 
 def test_pipeline_collect_failure_keeps_settlement(monkeypatch):
