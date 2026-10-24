@@ -50,7 +50,7 @@ def test_pipeline_settles_then_collects_tonight(monkeypatch):
     assert [c[0] for c in calls] == ["settle", "collect"]  # settle first
     collect_kwargs = calls[1][1]
     assert collect_kwargs["include_live"] is False
-    assert collect_kwargs["hours_ahead"] == 18.0
+    assert collect_kwargs["hours_ahead"] == 24.0
     assert summary["settle"]["n_settled"] == 12
     assert summary["collect"]["n_quotes"] == 900
     assert "warning" not in summary["collect"]

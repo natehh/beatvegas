@@ -9,8 +9,9 @@ Run order matters for a clean ledger:
    safely covers "everything that settled since the last run", i.e. last
    night's games on a daily cadence.
 2. **Collect** — snapshot The Odds API player props for games tipping off in
-   the next ``--hours-ahead`` hours (not yet live). With the default 18h
-   window and a 21:00 UTC run, that is exactly tonight's NBA slate.
+   the next ``--hours-ahead`` hours (not yet live). With the default 24h
+   window and a 15:00 UTC (9am MT) run, that covers today's afternoon and
+   evening slate, including weekend matinees.
 
 Used by ``.github/workflows/daily-props.yml``; also runnable by hand:
 
@@ -41,7 +42,7 @@ from sports.nba.prop_settle import settle_prop_quotes  # noqa: E402
 
 def run_pipeline(
     *,
-    hours_ahead: float = 18.0,
+    hours_ahead: float = 24.0,
     finished_hours: float = 3.0,
     markets: Sequence[str] = DEFAULT_MARKETS,
     regions: str = "us",
@@ -91,8 +92,8 @@ def run_pipeline(
 
 def main() -> int:
     p = argparse.ArgumentParser(description="Daily NBA props: settle previous, collect today")
-    p.add_argument("--hours-ahead", type=float, default=18.0,
-                   help="Collect games tipping within this window (default 18 = tonight)")
+    p.add_argument("--hours-ahead", type=float, default=24.0,
+                   help="Collect games tipping within this window (default 24 = today + early tomorrow)")
     p.add_argument("--finished-hours", type=float, default=3.0,
                    help="Settle games that tipped at least this many hours ago")
     p.add_argument("--markets", default=",".join(DEFAULT_MARKETS),

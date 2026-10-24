@@ -108,10 +108,11 @@ historical player-prop lines was found. What is in place:
   expectations; the first live snapshot shows their lines already sit
   2.4 points away from last-season averages on the points market.
 - **Daily automation.** `.github/workflows/daily-props.yml` runs
-  `scripts/daily_prop_pipeline.py` at 21:00 UTC every day: it settles
+  `scripts/daily_prop_pipeline.py` at 15:00 UTC (9am MT) every day: it settles
   every previously collected prop whose game finished (ESPN box scores,
   no key needed — in practice last night's slate), then snapshots
-  tonight's lines for all games tipping in the next 18 hours, and
+  lines for all games tipping in the next 24 hours (today's afternoon
+  and evening slate, including weekend matinees), and
   commits `data/props/prop_quotes.jsonl` + `prop_settled.jsonl` back to
   the repo so the backtest dataset accumulates on its own. One-time
   setup: add a GitHub repository secret `THE_ODDS_API_KEY` (Settings →

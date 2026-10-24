@@ -16,9 +16,11 @@ name: Daily NBA player props
 
 on:
   schedule:
-    # 21:00 UTC daily = 5pm ET / 3pm MT: tonight's props are posted,
-    # last night's games finished long ago.
-    - cron: "0 21 * * *"
+    # 15:00 UTC daily = 9am MT (8am in winter; GitHub cron is UTC and does
+    # not follow DST). A 24h window then covers today's afternoon/evening
+    # slate (incl. weekend matinees) plus tomorrow's early games, and last
+    # night's games finished long ago.
+    - cron: "0 15 * * *"
   workflow_dispatch:
     inputs:
       skip_collect:
@@ -28,7 +30,7 @@ on:
       hours_ahead:
         description: "Collect games tipping within this many hours"
         type: string
-        default: "18"
+        default: "24"
 
 permissions:
   contents: write
@@ -59,7 +61,7 @@ jobs:
           ARGS=""
           if [ "${{ inputs.skip_collect }}" = "true" ]; then ARGS="--skip-collect"; fi
           python scripts/daily_prop_pipeline.py \
-            --hours-ahead "${{ inputs.hours_ahead || '18' }}" $ARGS
+            --hours-ahead "${{ inputs.hours_ahead || '24' }}" $ARGS
 
       - name: Upload raw snapshots
         if: always()
