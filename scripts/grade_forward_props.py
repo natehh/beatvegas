@@ -29,12 +29,24 @@ on it being the sole positive market across both DunkAPI windows
 combined (n=48, +13.0%, MAE tied with the close). Everything else is
 exploratory until the forward sample says otherwise.
 
-Status Nov 2026 (12 forward dates, traditional books, 4,572 bets):
-the assists hypothesis did NOT hold (point-edge ROI -6.1%, and
--4.5% on the committed Oct-24 slate alone). Pooled forward ROI is
--3.6% -- vig-like, with model MAE tied-or-slightly-worse than the
-line in most markets. The only positive market is rebounds (+4.2%),
-which is post-hoc and exploratory, not a new license to bet.
+Status Nov 2026 (12 forward dates, traditional books only,
+rep-book consensus, 4,515 bets / 220 players): the assists
+hypothesis did NOT hold (point-edge ROI -6.5%, and -4.5% on the
+committed Oct-24 slate alone, where the model tied the line on
+MAE 3.11 vs 3.10 and returned +1.3% flat at -110). Pooled forward
+ROI is -3.7% -- vig-like: hit rate 53.6% is not enough because
+the model's chosen sides are the juiced sides (median chosen
+odds -115 to -155; overs -7% vs unders ~0% per side). Model MAE
+is tied-or-slightly-worse than the line in most markets (reb is
+the exception, 2.03 vs 2.06, and the only positive market at
++2.9% -- post-hoc and exploratory, not a new license to bet).
+Two model bugs found in this data and fixed: the GBM layer had
+been trained only on rotation players and over-projected bench
+minutes by +4 to +7 (now trained on all rows), and starters'
+minutes are systematically over-projected in a season's first
+three games (ratio 0.92-0.95 in three straight seasons; 0.95
+shrink applied for cs<=2). Neither moves the forward ROI
+materially -- the model is at the line's accuracy, not above it.
 """
 
 from __future__ import annotations

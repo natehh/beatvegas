@@ -180,6 +180,26 @@ is in place:
   recency features have caught up) and is a reason to keep
   collecting, not to bet. FG3M lost in both windows; don't bet it
   with this model. Cumulative Dunk spend: 489/500 free credits.
+- **Forward sample graded (Nov 2026): vig-like, two bugs fixed.**
+  Twelve PropLine-era slates (Oct 24–Nov 5, traditional books only,
+  representative-book consensus, 4,515 bets / 220 players): pooled
+  ROI **−3.7%** with model MAE tied-or-slightly-worse than the line
+  in most markets (REB the exception, 2.03 vs 2.06 and +2.9% ROI —
+  exploratory). The pre-registered assists hypothesis **failed**
+  (−6.5%; −4.5% on the committed Oct-24 slate, where the model
+  otherwise tied the line). Chosen sides are the juiced sides
+  (median −115 to −155; model overs −7% vs unders ~0%), so a 53.6%
+  hit rate still loses. Two bugs this data exposed and fixed:
+  the GBM layer was trained only on rotation players yet applied
+  to everyone, over-projecting bench minutes by +4 to +7 (now
+  trained on all rows), and starters' minutes are over-projected
+  in a season's first three games every year (ratio 0.92–0.95;
+  0.95 shrink for `cs_games<=2` now applied). **Pipeline warning:**
+  the daily job has failed since Nov 6 — `prop_quotes.jsonl` hit
+  GitHub's 100 MB file limit (PropLine collects many books,
+  markets and snapshots, and settlement duplicates per snapshot).
+  The ledgers need dedup/rotation or LFS before collection can
+  resume; that work belongs on `main`'s PropLine pipeline.
 - **Forward test, pre-registered.** The model now covers 2026-27
   (`grade_forward_props.py` projects future games via synthetic
   next-game rows). Picks for the 2026-10-24 slate (180 consensus
