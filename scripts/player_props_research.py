@@ -343,6 +343,7 @@ def _add_v2_features(df: pd.DataFrame) -> pd.DataFrame:
         if col not in df:
             df[col] = 0.0
     df["usage_poss"] = df["fga"] + 0.44 * df["fta"] + df["tov"]
+    df["cs_games_prior"] = df.groupby(["player_id", "season"]).cumcount()
 
     stats = ["pts", "reb", "ast", "pra", "fg3m"]
     for h in (3, 5, 8):
@@ -459,6 +460,12 @@ def add_projections(df: pd.DataFrame) -> pd.DataFrame:
         else df["min_proj"]
     )
     min_adj = min_base * (1 + 0.20 * df.get("missing_share5", 0.0))
+    # First three games of a season: coaches run wider rotations and
+    # ramp starters up -- projected minutes ran a consistent
+    # actual/projected ratio of 0.92-0.95 in cs<=2 across 2024-25,
+    # 2025-26 and 2026-27 (bias +1.4 to +2.0 min), ~1.0 thereafter.
+    cs_games = df.get("cs_games_prior", pd.Series(99, index=df.index))
+    min_adj = min_adj * np.where(cs_games <= 2, 0.95, 1.0)
     missed = df.get("own_missed_games", pd.Series(0, index=df.index))
     df["min_proj"] = np.where(missed >= 2, min_adj * 0.90, min_adj).clip(0, 48)
 
@@ -502,7 +509,7 @@ def _ml_feature_columns(target: str) -> list[str]:
         "games_prior", "rest_days", "pace_factor", "opp_def_factor",
         "min_season_prior", "min_l10_prior", "min_l5_prior",
         "min_ewm3", "min_ewm5", "min_ewm8", "min_cs_l5",
-        "missing_share5", "own_missed_games",
+        "missing_share5", "own_missed_games", "cs_games_prior",
         "opp_pts_factor", "opp_reb_factor", "opp_ast_factor", "opp_fg3m_factor",
         "usage_permin_ewm5", "ppp_ewm5", "min_proj",
     ]
@@ -538,10 +545,15 @@ def add_ml_projections(df: pd.DataFrame) -> pd.DataFrame:
     for i, season in enumerate(seasons):
         if i == 0:
             continue
+        # Train on ALL rows (games_prior >= 10). An earlier version
+        # trained only on rotation players (min_proj >= 20) and then
+        # applied the model to everyone: out of distribution, it
+        # over-projected bench minutes by +4 to +7 in every season
+        # (found Nov 2026 on 2026-27 data). Training on all rows
+        # removes that bias and leaves rotation accuracy unchanged.
         train = df[
             df["season"].isin(seasons[:i])
             & (df["games_prior"] >= 10)
-            & (df["min_proj_heur"] >= 20)
         ]
         test_mask = (df["season"] == season) & (df["games_prior"] >= 10)
         if len(train) < 500 or not test_mask.any():

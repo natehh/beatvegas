@@ -28,6 +28,13 @@ EV>=0 rule is the only market allowed to be called promising, based
 on it being the sole positive market across both DunkAPI windows
 combined (n=48, +13.0%, MAE tied with the close). Everything else is
 exploratory until the forward sample says otherwise.
+
+Status Nov 2026 (12 forward dates, traditional books, 4,572 bets):
+the assists hypothesis did NOT hold (point-edge ROI -6.1%, and
+-4.5% on the committed Oct-24 slate alone). Pooled forward ROI is
+-3.6% -- vig-like, with model MAE tied-or-slightly-worse than the
+line in most markets. The only positive market is rebounds (+4.2%),
+which is post-hoc and exploratory, not a new license to bet.
 """
 
 from __future__ import annotations
@@ -61,13 +68,32 @@ def _norm(name: str) -> str:
     return " ".join(name.lower().replace(".", " ").split())
 
 
+TRADITIONAL_BOOKS = {
+    "draftkings", "fanduel", "betmgm", "caesars", "bovada", "betrivers",
+    "espnbet", "fanatics", "hardrock", "unibet", "bet365", "pinnacle",
+    "betonlineag", "bet99", "betus", "wynnbet", "circa", "superbook",
+}
+
+
 def consensus_forward(quotes: Sequence[dict[str, Any]]) -> pd.DataFrame:
-    """One row per event-player-market at the median quoted line."""
+    """One row per event-player-market at the median quoted line.
+
+    Odds come from the book whose line is closest to the median (a
+    real, bettable quote). DFS pick'em and exchange books (PrizePicks,
+    Pick6, Kalshi, ProphetX, ...) are excluded when any traditional
+    book quotes the market: their flat +100 / exchange prices made
+    cross-book median odds meaningless in the PropLine-era ledger
+    (found Nov 2026 -- pooled ROI swung from +25% to -4% on the
+    book filter alone).
+    """
     df = pd.DataFrame(quotes)
     df = df[df["market"].isin(MARKET_TO_STAT)].copy()
     df["player_norm"] = df["player"].map(_norm)
     out = []
     for (event_id, pnorm, market), grp in df.groupby(["event_id", "player_norm", "market"]):
+        trad = grp[grp["bookmaker"].isin(TRADITIONAL_BOOKS)]
+        if len(trad):
+            grp = trad
         lines = [float(x) for x in grp["line"]]
         median_line = float(np.median(lines))
         rep = grp.assign(_d=(grp["line"].astype(float) - median_line).abs())

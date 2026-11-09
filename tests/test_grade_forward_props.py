@@ -35,6 +35,16 @@ def test_consensus_forward_median_and_accents():
     assert "luka doncic" in set(df["player_norm"])
 
 
+def test_consensus_excludes_dfs_books_when_traditional_present():
+    df = mod.consensus_forward([
+        _quote("prizepicks", 21.5, over=100, under=100),
+        _quote("fanduel", 20.5, over=-115, under=-105),
+    ])
+    assert len(df) == 1
+    r = df.iloc[0]
+    assert r["bookmaker"] == "fanduel" and r["line"] == 20.5 and r["over_odds"] == -115
+
+
 def test_grade_settled_scores_against_actuals(tmp_path):
     picks = pd.DataFrame([{
         "event_id": "e1", "player_norm": "test player", "market": "player_points",

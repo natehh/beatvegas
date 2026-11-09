@@ -101,8 +101,9 @@ def test_pregame_features_use_only_prior_games():
     df2 = mod.add_projections(df)
     # projection for game 3 comes only from games 1-2 (rates are constant
     # here; v2's opponent factor, built from this toy's one-player team
-    # totals, is the only thing pulling it off 15)
-    assert df2.loc[2, "pts_proj"] == pytest.approx(15.0, abs=2.0)
+    # totals, and the cs<=2 early-season minutes shrink pull it off 15)
+    assert df2.loc[2, "pts_proj"] == pytest.approx(15.0, abs=2.6)
+    assert list(df["cs_games_prior"]) == [0, 1, 2, 3]
     # v2 feature block is populated and pregame
     assert df.loc[2, "min_ewm3"] == pytest.approx(30.0)
     assert df.loc[0, "games_prior"] == 0 and df.loc[2, "own_missed_games"] == 0
