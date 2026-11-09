@@ -194,7 +194,27 @@ is in place:
   to everyone, over-projecting bench minutes by +4 to +7 (now
   trained on all rows), and starters' minutes are over-projected
   in a season's first three games every year (ratio 0.92–0.95;
-  0.95 shrink for `cs_games<=2` now applied). **Pipeline warning:**
+  0.95 shrink for `cs_games<=2` now applied). - **Exchanges: a price edge, not a prediction edge (Nov 2026).**
+  Grading the same forward sample at Kalshi/NoVig/ProphetX prices:
+  exchange lines are as accurate as sportsbook lines (the model
+  does not beat them), but the margin is structurally thinner --
+  median overround 1.020 (Kalshi), 1.026 (NoVig), 1.041 (ProphetX)
+  vs 1.067-1.077 at traditional books. On identical bets, swapping
+  the traditional price for the best exchange price (same line,
+  3,762 bets) moves ROI from **-3.3% to +0.4%**, with a better
+  price 77% of the time (median chosen-side odds -113 vs -121);
+  a single exchange consensus sits at -0.4% vs -3.8% traditional.
+  Per book on its own lines none is positive (Kalshi -2.4% despite
+  a 59% hit rate -- its chosen sides are steep), and rebounds are
+  positive at every venue (+2.8% to +5.4%), again exploratory.
+  Caveats: quoted exchange prices exclude trading fees and any
+  depth/liquidity limits in the PropLine feed, which can erase a
+  +0.4% gross figure; and best-of-three price shopping needs three
+  funded accounts. Verdict: exchanges roughly halve the vig drag --
+  they turn this model from a loser into a coin flip, and they'd
+  be the venue where any future genuine edge survives longest,
+  but they are not themselves an edge.
+- **Pipeline warning (cont.):**
   the daily job has failed since Nov 6 — `prop_quotes.jsonl` hit
   GitHub's 100 MB file limit (PropLine collects many books,
   markets and snapshots, and settlement duplicates per snapshot).
