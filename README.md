@@ -89,10 +89,12 @@ Also available via the API: `POST /api/nba/betting` with
 
 ### NBA player props
 
-Honest status: **no historical prop edge can be proven yet — the lines
-don't exist for free** (`scripts/player_props_research.py`). The Odds API
-historical prop prices are behind a paid tier, and no free archive of
-historical player-prop lines was found. What is in place:
+Honest status: **the model has now been graded against real historical
+closing lines (via DunkAPI) and lost** — see the DunkAPI bullet below
+(`scripts/player_props_research.py`, `scripts/dunkapi_props_backtest.py`).
+The Odds API historical prop prices are behind a paid tier, but DunkAPI's
+archive (back to May 2023) supplies closes on a free credit budget. What
+is in place:
 
 - **A validated projection model.** Projected minutes (L10/season blend)
   × shrunk per-minute rates (season + L10) × pace factor, plus an
@@ -133,9 +135,108 @@ historical player-prop lines was found. What is in place:
   points) and cross-book dispersion (36/71 props ≥1 point apart across
   books) — line shopping alone is worth points. After a few hundred
   settled props, the ledger supports a real model-vs-market verdict.
-- **Shortcut:** an archived-closing-line source (e.g. a free DunkAPI
-  key, which carries lines back to May 2023) turns the same projection
-  model into a true historical backtest immediately.
+- **DunkAPI historical backtest (done, negative).**
+  `scripts/dunkapi_props_backtest.py` grades the model against archived
+  closing lines (DunkAPI, from May 2023). Credit reality check:
+  `estimate_only` (free) shows the player+date-range form is metered at
+  10 credits *per game returned* despite the 10/call headline — a full
+  season for one star estimates at 640–730 credits, over the 500/month
+  free tier. So the script estimates first, enforces a 400-credit
+  budget, pulls by player + date range, and caches raw responses
+  (re-runs: 0 credits). Sample spent: 360 credits of pulls + 9 of
+  `search_players` for 8 high-minute starters over 2025-10-21..10-31
+  (1,345 rows → 180 consensus player-game-markets, 34 games; one bet
+  per market at the median close, settled at real book odds;
+  thresholds sized on free 2024-25 gamelog residuals). The close beat
+  the model on MAE for **every** stat (PTS 7.75 vs 8.99, PRA 8.76 vs
+  11.02, REB/AST/FG3M likewise), and betting the model returned
+  **−28.0% ROI (n=180)**, −28.6% at k=0.3 (n=92), −45.1% at k=0.5
+  (n=52). Caveat: the opening 11 days are the model's hardest window
+  (prior-season priors vs books pricing role changes — Maxey,
+  Wembanyama and Dončić all ran far over both), and 34 games is small;
+  but   as the first true closing-line grade it shows no edge, exactly
+  as the forward diagnostic hinted. A season-scale verdict needs a
+  paid tier or a longer forward ledger.
+- **Model v2 after that grade (mixed, encouraging).** Error
+  decomposition (0 credits, cached data) found: projected minutes
+  were nearly uncorrelated with actuals for starters (oracle-minutes
+  PTS MAE 7.47 would have beaten the close), prior-season priors
+  took ~5 games to catch up (points bias −7.0 → +1.9 across the
+  window), returners from 2+ missed games were over-projected by
+  ~3.6 minutes, and larger model-vs-line gaps were mostly model
+  error. V2 (`player_props_research.py`) adds a 2023-24 warm-up
+  season, EWMA/current-season features with season-discounted
+  priors (×0.25 at boundaries), a usage-based points rate,
+  per-stat opponent factors, rotation-absence/returner adjustments,
+  and a walk-forward GBM layer trained only on prior seasons —
+  full-season rotation MAE improves (minutes 4.78 → 4.47, PTS 5.36 → 5.17, PRA 6.73 → 6.53). Regraded on the same October
+  closes it still loses (PTS 9.30 vs 7.75; pooled −28.5%, cluster-
+  bootstrap 95% CI −43.5% to −12.8% over 36 player-games), but on a
+  **fresh January 2026 holdout** (120 credits; 60 bets, 10 games,
+  6 players) it beat the close on MAE in 4 of 5 stats (PTS 7.71 vs
+  8.17, REB 1.88 vs 2.25, AST 2.40 vs 2.75, PRA 10.13 vs 10.54)
+  with pooled ROI **+12.5%** (point-edge) / **+29.6%** (probability/
+  EV rule with player-specific shrunk residual SDs, n=38; bootstrap
+  CI +14.9% to +44.7% on just 12 player-games, conditional on
+  selection so really wider). Ten games proves nothing on its own —
+  it is consistent with the staleness diagnosis (mid-season, the
+  recency features have caught up) and is a reason to keep
+  collecting, not to bet. FG3M lost in both windows; don't bet it
+  with this model. Cumulative Dunk spend: 489/500 free credits.
+- **Forward sample graded (Nov 2026): vig-like, two bugs fixed.**
+  Twelve PropLine-era slates (Oct 24–Nov 5, traditional books only,
+  representative-book consensus, 4,515 bets / 220 players): pooled
+  ROI **−3.7%** with model MAE tied-or-slightly-worse than the line
+  in most markets (REB the exception, 2.03 vs 2.06 and +2.9% ROI —
+  exploratory). The pre-registered assists hypothesis **failed**
+  (−6.5%; −4.5% on the committed Oct-24 slate, where the model
+  otherwise tied the line). Chosen sides are the juiced sides
+  (median −115 to −155; model overs −7% vs unders ~0%), so a 53.6%
+  hit rate still loses. Two bugs this data exposed and fixed:
+  the GBM layer was trained only on rotation players yet applied
+  to everyone, over-projecting bench minutes by +4 to +7 (now
+  trained on all rows), and starters' minutes are over-projected
+  in a season's first three games every year (ratio 0.92–0.95;
+  0.95 shrink for `cs_games<=2` now applied). - **Exchanges: a price edge, not a prediction edge (Nov 2026).**
+  Grading the same forward sample at Kalshi/NoVig/ProphetX prices:
+  exchange lines are as accurate as sportsbook lines (the model
+  does not beat them), but the margin is structurally thinner --
+  median overround 1.020 (Kalshi), 1.026 (NoVig), 1.041 (ProphetX)
+  vs 1.067-1.077 at traditional books. On identical bets, swapping
+  the traditional price for the best exchange price (same line,
+  3,762 bets) moves ROI from **-3.3% to +0.4%**, with a better
+  price 77% of the time (median chosen-side odds -113 vs -121);
+  a single exchange consensus sits at -0.4% vs -3.8% traditional.
+  Per book on its own lines none is positive (Kalshi -2.4% despite
+  a 59% hit rate -- its chosen sides are steep), and rebounds are
+  positive at every venue (+2.8% to +5.4%), again exploratory.
+  Caveats: quoted exchange prices exclude trading fees and any
+  depth/liquidity limits in the PropLine feed, which can erase a
+  +0.4% gross figure; and best-of-three price shopping needs three
+  funded accounts. Verdict: exchanges roughly halve the vig drag --
+  they turn this model from a loser into a coin flip, and they'd
+  be the venue where any future genuine edge survives longest,
+  but they are not themselves an edge.
+- **Pipeline warning (cont.):**
+  the daily job has failed since Nov 6 — `prop_quotes.jsonl` hit
+  GitHub's 100 MB file limit (PropLine collects many books,
+  markets and snapshots, and settlement duplicates per snapshot).
+  The ledgers need dedup/rotation or LFS before collection can
+  resume; that work belongs on `main`'s PropLine pipeline.
+- **Forward test, pre-registered.** The model now covers 2026-27
+  (`grade_forward_props.py` projects future games via synthetic
+  next-game rows). Picks for the 2026-10-24 slate (180 consensus
+  props, 62 players) were generated and committed *before* tip-off
+  (`data/forward_picks_2026-10-24.csv`, 20:03 UTC vs 22:10 UTC
+  first tip); settle them free with `scripts/settle_prop_odds.py`
+  and grade with `grade_forward_props.py --grade`. Locked
+  hypothesis for the forward sample: assists under the EV rule is
+  the only market allowed to be called promising (sole positive
+  market, +13% on n=48, across both Dunk windows combined);
+  everything else is exploratory. An opponent-factor direction
+  bug found in review (factors were merged on the player's own
+  team, not the opponent) is fixed and verified in all 8
+  season/stat cells.
 
 Caveats: ~875 bets is a modest sample (ROI 95% CI roughly −1% to +11%), Yahoo
 split coverage is 75-100% of games depending on season, and the effect is a
